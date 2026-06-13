@@ -16,3 +16,5 @@ venv/
 
 # Source reference material (large / not code)
 *.pdf
+*.worklist.txt
+*.worklist.json

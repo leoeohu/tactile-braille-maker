@@ -294,7 +294,7 @@ class BatchTab(ttk.Frame):
         self.style = tk.StringVar(value=STYLES[0][0])
         self.lang = tk.StringVar(value=SCHEMES[0][0])
 
-        ttk.Label(self, text="清单：每行一个；可用「想法 | 盲文标签」分别指定图片与盲文").grid(
+        ttk.Label(self, text="清单：每行一个；「想法 | 盲文标签」分别指定图片与盲文（或用下方“从 PDF 分析”自动填入）").grid(
             row=0, column=0, columnspan=4, sticky="w")
         self.list = tk.Text(self, height=8, wrap="word")
         self.list.grid(row=1, column=0, columnspan=4, sticky="nsew", pady=(2, 8))
@@ -315,8 +315,10 @@ class BatchTab(ttk.Frame):
         ttk.Label(opt, text="精度 mm/格").grid(row=2, column=0, pady=(6, 0), sticky="w")
         ttk.Entry(opt, textvariable=self.precision, width=6).grid(row=2, column=1, sticky="w", pady=(6, 0))
 
+        self.pdfbtn = ttk.Button(self, text="📄 从 PDF 分析", command=self._pick_pdf)
+        self.pdfbtn.grid(row=3, column=0, sticky="w", pady=8)
         self.btn = ttk.Button(self, text="📦 批量生成", command=self._go)
-        self.btn.grid(row=3, column=0, columnspan=2, sticky="w", pady=8)
+        self.btn.grid(row=3, column=1, sticky="w", pady=8)
         ttk.Button(self, text="📂 打开输出文件夹", command=lambda: open_in_finder(OUT)).grid(
             row=3, column=2, columnspan=2, sticky="w")
         self.log = tk.Text(self, height=12, state="disabled", bg="#111", fg="#9f9", wrap="word")
@@ -343,6 +345,35 @@ class BatchTab(ttk.Frame):
         self.btn.config(state="normal", text="📦 批量生成")
         messagebox.showinfo("完成", "批量生成结束，请看日志与输出文件夹"
                             if code == 0 else "部分项目失败，请看日志")
+
+    # ---- PDF -> worklist (Gemini analyzes the PDF, fills the list for review)
+    def _logln(self, s):
+        self.log.config(state="normal"); self.log.insert("end", s + "\n"); self.log.see("end")
+        self.log.config(state="disabled")
+
+    def _pick_pdf(self):
+        p = filedialog.askopenfilename(filetypes=[("PDF", "*.pdf"), ("All", "*.*")])
+        if not p:
+            return
+        self.pdfbtn.config(state="disabled", text="⏳ 分析中…")
+        self._logln(f"📄 分析 PDF: {p}")
+        threading.Thread(target=self._analyze, args=(p,), daemon=True).start()
+
+    def _analyze(self, pdf):
+        r = subprocess.run([PY, str(HERE / "pdf_analyze.py"), pdf],
+                           cwd=str(HERE), capture_output=True, text=True)
+        self.after(0, self._analyzed, r)
+
+    def _analyzed(self, r):
+        self.pdfbtn.config(state="normal", text="📄 从 PDF 分析")
+        if r.returncode != 0 or not r.stdout.strip():
+            self._logln("分析失败:\n" + (r.stderr[-800:] or "(no output)"))
+            messagebox.showerror("分析失败", "PDF 分析失败，请看日志"); return
+        self.list.delete("1.0", "end")
+        self.list.insert("1.0", r.stdout.strip() + "\n")
+        n = len([ln for ln in r.stdout.splitlines() if ln.strip()])
+        self._logln((r.stderr.strip() or "") + f"\n✓ 已填入 {n} 项，检查/删减后点「批量生成」")
+        messagebox.showinfo("分析完成", f"Gemini 识别出 {n} 项，已填入清单。\n检查/删减后点「批量生成」。")
 
 
 class App(tk.Tk):

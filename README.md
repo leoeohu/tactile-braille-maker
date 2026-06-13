@@ -75,6 +75,20 @@ sun | 太阳
 # lines starting with # are ignored
 ```
 
+### From a PDF (Gemini builds the worklist)
+
+Point it at a PDF (e.g. a textbook chapter or a curated figure list) and Gemini extracts
+every image/diagram to make, as a ready-to-edit worklist:
+
+```bash
+python pdf_analyze.py 选图.pdf                 # -> 选图.worklist.txt (+ .json with pages/labels/notes)
+python batch.py 选图.worklist.txt --mode both  # then generate them
+```
+
+In the GUI **批量** tab, click **📄 从 PDF 分析**, pick the PDF, review/trim the auto-filled
+list, then **📦 批量生成**. Each line is `description | 中文标题`; the description draws the
+relief, the title becomes the braille label.
+
 ## Usage (command line)
 
 ```bash
