@@ -89,7 +89,10 @@ shorter side follows the picture, so the relief is never squished.
 | `--size` | 120 | **longer** plate side (mm); shorter side follows the image aspect |
 | `--base` | 3.0 | solid base thickness (mm) |
 | `--relief` | 1.5 | max raised height (mm) |
-| `--res` | 600 | **precision**: subdivisions along the longer side (higher = finer/slower) |
+| `--res` | 600 | subdivisions along the longer side (higher = finer/slower) |
+| `--precision` | — | **target detail in mm/vertex** (overrides `--res`; clamped to ≤2000 subdiv). 0.001mm is impossible — printers resolve ~0.1mm FDM / ~0.05mm resin |
+| `--style` | line | `line` = black/white line art (flat-topped relief) · `relief` = **grayscale bas-relief with varying depth** |
+| `--braille-text` | off | detect image text and emboss it as braille (国家通用盲文/English) instead of glyphs |
 | `--threshold` | 128 | binarize cutoff 0–255; `-1` = keep smooth grayscale relief |
 | `--thicken` | 2 | widen raised lines by N px so fingers can feel them |
 | `--blur` | 1.0 | edge smoothing (printability) |

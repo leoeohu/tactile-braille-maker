@@ -37,14 +37,26 @@ HERE = Path(__file__).resolve().parent
 BLENDER = os.environ.get(
     "BLENDER", "/Applications/Blender.app/Contents/MacOS/Blender")
 
-# Style appended to every generation prompt: enforces a clean, high-contrast,
-# dark-subject-on-white-background picture that turns into good raised relief.
+# Hard ceiling on grid subdivisions (longer side). res 2000 ~ 4M verts ~ 400MB STL;
+# beyond this files/Blender become impractical and it is already far finer than any printer.
+MAX_RES = 2000
+
+# 'line' style: clean high-contrast black/white line art -> flat-topped raised relief.
 TACTILE_STYLE = (
     "bold simple high-contrast black and white line illustration, "
     "thick clean solid black outlines on a pure white background, flat 2D, "
     "minimalist, no shading, no gradient, no greyscale fill, no color, no texture, "
     "no background scenery, single centered subject, clear bold recognizable silhouette, "
     "coloring-book / tactile diagram style for blind readers"
+)
+
+# 'relief' style: a smooth grayscale image (brighter = higher) -> sculptural bas-relief
+# with varying depth, kept grayscale (no threshold) so heights differ across the subject.
+RELIEF_STYLE = (
+    "smooth white bas-relief sculpture of the subject carved in clay, photographed top-down "
+    "with soft even lighting, grayscale height map where raised areas are bright and recessed "
+    "areas are dark, gentle tonal gradients describing 3D form and depth, rounded smooth volumes, "
+    "no hard outlines, no text or lettering, plain dark background, subject centered filling the frame"
 )
 
 
@@ -161,7 +173,7 @@ def detect_text(image_path: str, key: str, model: str) -> list:
     if not m:
         return []
     out = []
-    for it in json.loads(m.group(0)):
+    for it in json.loads(m.group(0), strict=False):   # tolerate control chars in strings
         t = str(it.get("text", "")).strip()
         b = it.get("box_2d") or it.get("box")
         if not t or not b or len(b) != 4:
@@ -172,19 +184,22 @@ def detect_text(image_path: str, key: str, model: str) -> list:
     return out
 
 
-def composite_braille(height_path: Path, src_w: int, src_h: int, detections: list, *,
+def composite_braille(height_path: Path, detections: list, *,
                       plate_x: float, plate_y: float, margin: float, relief: float,
                       lang: str, dot_height: float = 0.6, dot_diam: float = 1.5,
                       dot_spacing: float = 2.5, cell_pitch: float = 6.0) -> int:
     """Erase printed text from the height map and stamp standard-spaced braille dots
-    at those positions. Returns how many labels were placed."""
+    at those positions. Boxes are normalized 0..1 over the original image content.
+    Returns how many labels were placed."""
     import numpy as np
     from PIL import Image
     import braille as B
 
     hm = Image.open(height_path).convert("L")
     HW, HH = hm.size
-    mpx = round(max(src_w, src_h) * margin)        # padding added by build_heightmap
+    content_long = max(HW, HH) / (1 + 2 * margin)   # undo build_heightmap's margin pad
+    mpx = round(margin * content_long)
+    content_w, content_h = HW - 2 * mpx, HH - 2 * mpx
     ppm = HW / plate_x                              # px per mm (aspect preserved)
     ds = dot_spacing * ppm
     cp = cell_pitch * ppm
@@ -210,8 +225,8 @@ def composite_braille(height_path: Path, src_w: int, src_h: int, detections: lis
     placed = 0
     for det in detections:
         x0, y0, x1, y1 = det["box"]
-        bx0, by0 = mpx + x0 * src_w, mpx + y0 * src_h
-        bx1, by1 = mpx + x1 * src_w, mpx + y1 * src_h
+        bx0, by0 = mpx + x0 * content_w, mpx + y0 * content_h
+        bx1, by1 = mpx + x1 * content_w, mpx + y1 * content_h
         pad = int(0.35 * ds)
         arr[max(0, int(by0 - pad)):min(HH, int(by1 + pad)),
             max(0, int(bx0 - pad)):min(HW, int(bx1 + pad))] = 0.0   # erase printed text
@@ -269,6 +284,13 @@ def main() -> None:
     ap.add_argument("--relief", type=float, default=1.5, help="max relief height (mm)")
     ap.add_argument("--res", type=int, default=600,
                     help="precision: subdivisions along the longer side (higher = finer/slower)")
+    ap.add_argument("--precision", type=float, default=None,
+                    help=f"target detail in mm per vertex (overrides --res; clamped so "
+                         f"subdivisions <= {MAX_RES}). Note: 3D printers resolve ~0.1mm (FDM) "
+                         f"/ ~0.05mm (resin), so finer is not printable.")
+    ap.add_argument("--style", choices=["line", "relief"], default="line",
+                    help="line = black/white line art (flat-topped relief); "
+                         "relief = grayscale bas-relief with varying depth")
     # image generation
     ap.add_argument("--model", default="flux", help="Pollination model")
     ap.add_argument("--gemini-model", default="gemini-2.5-flash", help="Gemini vision model")
@@ -302,7 +324,26 @@ def main() -> None:
         ap.error("--use-image-directly requires --image")
 
     cfg = load_env()
-    threshold = None if args.threshold is not None and args.threshold < 0 else args.threshold
+
+    # ---- resolution / precision (subdivisions along the longer side)
+    if args.precision:
+        want = round(args.size / args.precision)
+        res = max(2, min(MAX_RES, want))
+        if want > res:
+            print(f"   ⚠️ 精度 {args.precision}mm 需要 {want} 细分，超过上限 {MAX_RES}；已用最高可行 "
+                  f"≈{args.size/res:.3f}mm/格（3D打印机约 0.1mm FDM / 0.05mm 树脂，再细也打不出来）")
+    else:
+        res = args.res
+
+    # ---- style: black/white line art vs grayscale bas-relief
+    if args.style == "relief":
+        gen_style = RELIEF_STYLE
+        h_invert, h_threshold, h_thicken, h_blur = False, None, 0, max(args.blur, 1.5)
+    else:
+        gen_style = TACTILE_STYLE
+        h_invert = args.invert
+        h_threshold = None if args.threshold < 0 else args.threshold
+        h_thicken, h_blur = args.thicken, args.blur
 
     # ---- output naming
     slug_src = (args.idea or Path(args.image).stem or "tactile")
@@ -331,20 +372,19 @@ def main() -> None:
                                   cfg["GEMINI_API_KEY"], args.gemini_model)
             print(f"      -> {desc}")
             subject = f"{subject}, {desc}" if subject else desc
-        prompt = f"{subject}. {TACTILE_STYLE}"
+        prompt = f"{subject}. {gen_style}"
         if not cfg.get("POLLINATIONS_TOKEN"):
             sys.exit("POLLINATIONS_TOKEN missing (needed to generate the image).")
-        print(f"[2/4] generating image via Pollination ({args.model}) ...")
+        print(f"[2/4] generating image via Pollination ({args.model}, style={args.style}) ...")
         generate_image(prompt, cfg["POLLINATIONS_TOKEN"], gen_png,
                        args.gen_size, args.gen_size, args.model, args.seed)
         print(f"      -> {gen_png}")
         source = gen_png
 
     # ---- 2. heightmap
-    print("[3/4] building heightmap ...")
-    build_heightmap(source, height_png, invert=args.invert, threshold=threshold,
-                    thicken=args.thicken, blur=args.blur, margin=args.margin)
-    print(f"      -> {height_png}")
+    print(f"[3/4] building heightmap (style={args.style}) ...")
+    build_heightmap(source, height_png, invert=h_invert, threshold=h_threshold,
+                    thicken=h_thicken, blur=h_blur, margin=args.margin)
 
     # ---- plate dimensions follow the heightmap aspect ratio (no squishing)
     from PIL import Image as _Img
@@ -354,14 +394,19 @@ def main() -> None:
     plate_x = round(args.size * hw / longer, 2)
     plate_y = round(args.size * hh / longer, 2)
 
+    # ---- upscale heightmap so fine features (esp. braille dots) aren't under-sampled
+    if longer < res:
+        sc = res / longer
+        with _Img.open(height_png) as _hm:
+            _hm.resize((round(hw * sc), round(hh * sc)), _Img.LANCZOS).save(height_png)
+        print(f"      heightmap upscaled {longer}->{res}px to match precision")
+    print(f"      -> {height_png}")
+
     # ---- 2.5 detect text -> emboss braille (optional)
     if args.braille_text:
         if not cfg.get("GEMINI_API_KEY"):
             print("   ⚠️ 跳过盲文翻译: 缺少 GEMINI_API_KEY")
         else:
-            from PIL import Image as _SI
-            with _SI.open(source) as _si:
-                src_w, src_h = _si.size
             print(f"[3.5/4] detecting text via Gemini ({args.gemini_model}) -> braille ...")
             try:
                 dets = detect_text(str(source), cfg["GEMINI_API_KEY"], args.gemini_model)
@@ -370,7 +415,7 @@ def main() -> None:
                 print(f"   ⚠️ 文字检测失败: {e}")
             if dets:
                 print("   找到文字: " + ", ".join(f"“{d['text']}”" for d in dets))
-                n = composite_braille(height_png, src_w, src_h, dets,
+                n = composite_braille(height_png, dets,
                                       plate_x=plate_x, plate_y=plate_y, margin=args.margin,
                                       relief=args.relief, lang=args.braille_lang,
                                       dot_height=args.braille_dot_height)
@@ -380,9 +425,10 @@ def main() -> None:
 
     # ---- 3. displace + solidify + export in Blender
     print(f"[4/4] Blender displace -> STL "
-          f"(plate={plate_x}×{plate_y}mm base={args.base}mm relief={args.relief}mm res={args.res}) ...")
+          f"(plate={plate_x}×{plate_y}mm base={args.base}mm relief={args.relief}mm res={res}, "
+          f"≈{args.size/res:.3f}mm/格) ...")
     run_blender(height_png, out_stl, size_x=plate_x, size_y=plate_y,
-                base=args.base, relief=args.relief, res=args.res)
+                base=args.base, relief=args.relief, res=res)
 
     mb = out_stl.stat().st_size / 1e6
     print(f"\n✅ {out_stl}  ({mb:.1f} MB)")

@@ -37,12 +37,8 @@ def open_in_finder(path: Path):
     subprocess.run(["open", "-R", str(path)] if path.exists() else ["open", str(OUT)])
 
 
-# precision presets for the relief plate: label -> (mesh subdivisions, generated-image px)
-PRECISION = [
-    ("标准 (快)", 600, 1024),
-    ("高", 900, 1280),
-    ("超高 (慢)", 1200, 1600),
-]
+# relief style: label -> tactile.py --style value
+STYLES = [("线条 (黑白)", "line"), ("灰度浮雕 (深浅不一)", "relief")]
 
 
 class Runner:
@@ -93,7 +89,8 @@ class PictureTab(ttk.Frame):
         self.size = tk.StringVar(value="120")
         self.base = tk.StringVar(value="3")
         self.relief = tk.StringVar(value="1.5")
-        self.precision = tk.StringVar(value=PRECISION[0][0])
+        self.precision = tk.StringVar(value="0.1")     # mm per vertex
+        self.style = tk.StringVar(value=STYLES[0][0])
         self.braille_text = tk.BooleanVar(value=False)
         self._preview_img = None
 
@@ -115,14 +112,18 @@ class PictureTab(ttk.Frame):
             ttk.Entry(box, textvariable=var, width=6).grid(row=0, column=i*3+1)
             ttk.Label(box, text=unit).grid(row=0, column=i*3+2, padx=(2, 0))
         ttk.Label(box, text="精度").grid(row=1, column=0, pady=(8, 0), sticky="w")
-        ttk.Combobox(box, textvariable=self.precision, state="readonly", width=10,
-                     values=[p[0] for p in PRECISION]).grid(
-            row=1, column=1, columnspan=4, sticky="w", pady=(8, 0))
+        ttk.Entry(box, textvariable=self.precision, width=6).grid(row=1, column=1, pady=(8, 0), sticky="w")
+        ttk.Label(box, text="mm/格 (越小越细; 打印机极限≈0.1)", foreground="#777").grid(
+            row=1, column=2, columnspan=4, sticky="w", padx=(2, 0), pady=(8, 0))
+        ttk.Label(box, text="风格").grid(row=2, column=0, pady=(8, 0), sticky="w")
+        ttk.Combobox(box, textvariable=self.style, state="readonly", width=16,
+                     values=[s[0] for s in STYLES]).grid(
+            row=2, column=1, columnspan=4, sticky="w", pady=(8, 0))
         ttk.Label(box, text="（短边按图片比例自动）", foreground="#777").grid(
-            row=1, column=5, columnspan=4, sticky="w", padx=(12, 0), pady=(8, 0))
+            row=2, column=5, columnspan=4, sticky="w", padx=(12, 0), pady=(8, 0))
         ttk.Checkbutton(box, text="把图中所有文字翻译成盲文（带文字的图建议配合“直接用此图”）",
                         variable=self.braille_text).grid(
-            row=2, column=0, columnspan=9, sticky="w", pady=(8, 0))
+            row=3, column=0, columnspan=9, sticky="w", pady=(8, 0))
 
         self.btn = ttk.Button(self, text="🛠  生成浮雕 STL", command=self._go)
         self.btn.grid(row=4, column=0, columnspan=2, sticky="w", pady=4)
@@ -146,10 +147,10 @@ class PictureTab(ttk.Frame):
         img = self.image_path.get().strip()
         if not idea and not img:
             messagebox.showwarning("缺少输入", "请填写想法或选择图片"); return
-        res, gen = next((r, g) for (lab, r, g) in PRECISION if lab == self.precision.get())
+        style = dict(STYLES)[self.style.get()]
         cmd = [PY, str(HERE / "tactile.py"), "--keep",
                "--size", self.size.get(), "--base", self.base.get(), "--relief", self.relief.get(),
-               "--res", str(res), "--gen-size", str(gen)]
+               "--precision", self.precision.get(), "--style", style]
         if idea:
             cmd += ["--idea", idea]
         if img:

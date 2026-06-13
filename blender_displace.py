@@ -50,7 +50,9 @@ img = bpy.data.images.load(heightmap)
 img.colorspace_settings.name = 'Non-Color'  # map pixel value linearly to height
 tex = bpy.data.textures.new("heightmap", 'IMAGE')
 tex.image = img
-tex.extension = 'EXTEND'  # clamp at edges, never tile
+tex.extension = 'EXTEND'        # clamp at edges, never tile
+tex.use_interpolation = True    # smooth slopes (good for braille domes)
+tex.filter_size = 0.1           # minimal filtering -> crisp edges (default 1.0 blurs)
 
 mod = obj.modifiers.new("displace", 'DISPLACE')
 mod.texture = tex
