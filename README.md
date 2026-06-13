@@ -86,8 +86,24 @@ python batch.py 选图.worklist.txt --mode both  # then generate them
 ```
 
 In the GUI **批量** tab, click **📄 从 PDF 分析**, pick the PDF, review/trim the auto-filled
-list, then **📦 批量生成**. Each line is `description | 中文标题`; the description draws the
-relief, the title becomes the braille label.
+list, then **📦 批量生成**. Each line is `description | 中文标题`.
+
+**Two ways to make each picture** (图片做法 selector / `pdf_make.py`):
+* **重画 (redraw)** — Pollination draws a clean tactile diagram from the description; the title
+  becomes the braille label. Best for simple shapes.
+* **抠原图 (extract)** — render the PDF page, crop the actual figure (`box_2d` from the analysis),
+  and emboss it directly with its own labels turned to braille **in place**. Faithful to the
+  textbook diagram. CLI:
+
+```bash
+python pdf_make.py 选图.pdf 选图.worklist.json --size 160        # extract + in-place braille
+python pdf_make.py 选图.pdf 选图.worklist.json --no-braille       # figure only
+```
+
+> **Gemini quota:** the free tier allows ~20 requests/day. PDF analysis is 1 request, but the
+> 抠原图 braille step is 1 request per figure, so large batches can hit the cap (calls retry with
+> backoff, and a figure still prints without braille if its detection fails). Enable billing on the
+> API key for big runs.
 
 ## Usage (command line)
 

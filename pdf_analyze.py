@@ -28,8 +28,11 @@ PROMPT = (
     "This PDF curates images/diagrams to turn into tactile (raised-relief) 3D prints for "
     "blind students. List EVERY distinct item to be made. For each item give: "
     "title (the Chinese name), grade (e.g. 七年级上册 if shown), page (1-based page in THIS pdf "
-    "where its main figure is), description (ONE concise English sentence describing the figure "
-    "so it can be redrawn as a simple bold black-and-white tactile line diagram), "
+    "where its main figure is), box_2d ([ymin,xmin,ymax,xmax] normalized 0-1000, tightly around "
+    "ONLY the single best figure image for that item on that page — exclude captions and body "
+    "paragraphs; if a note says to use a particular version, box that one), "
+    "description (ONE concise English sentence describing the figure so it can be redrawn as a "
+    "simple bold black-and-white tactile line diagram), "
     "labels (the text labels appearing in that figure, as a list), and note (any Chinese "
     "preference note, e.g. which version to use). Return a JSON array."
 )
@@ -48,14 +51,18 @@ def analyze(pdf_path: str, key: str, model: str) -> list:
                 "title": types.Schema(type=types.Type.STRING),
                 "grade": types.Schema(type=types.Type.STRING),
                 "page": types.Schema(type=types.Type.INTEGER),
+                "box_2d": types.Schema(type=types.Type.ARRAY,
+                                       items=types.Schema(type=types.Type.NUMBER)),
                 "description": types.Schema(type=types.Type.STRING),
                 "labels": types.Schema(type=types.Type.ARRAY,
                                        items=types.Schema(type=types.Type.STRING)),
                 "note": types.Schema(type=types.Type.STRING),
             }))
+    import re
+    import time
     client = genai.Client(api_key=key)
     last = None
-    for _ in range(3):                                   # retry: occasional empty/parse miss
+    for _ in range(3):                                   # retry: occasional empty/parse/rate-limit
         try:
             r = client.models.generate_content(
                 model=model,
@@ -67,7 +74,14 @@ def analyze(pdf_path: str, key: str, model: str) -> list:
                 return items
         except Exception as e:
             last = e
+            msg = str(e)
+            if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
+                d = re.search(r"retryDelay['\"]?:?\s*['\"]?(\d+)", msg)
+                time.sleep(min(int(d.group(1)) if d else 8, 30))
     if last:
+        if "429" in str(last) or "RESOURCE_EXHAUSTED" in str(last):
+            sys.exit("Gemini 配额用尽（免费层每天约 20 次请求）。请稍后再试，或在 Google AI Studio "
+                     "为该 API key 开通计费以提高额度。")
         raise last
     return []
 

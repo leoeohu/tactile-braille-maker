@@ -199,6 +199,7 @@ def detect_text(image_path: str, key: str, model: str) -> list:
             out.append({"text": t, "box": (xmin / s, ymin / s, xmax / s, ymax / s)})
         return out
 
+    import time
     last_err = None
     for attempt in range(3):                       # retry: Gemini sometimes returns nothing
         try:
@@ -211,6 +212,10 @@ def detect_text(image_path: str, key: str, model: str) -> list:
                 return out
         except Exception as e:                     # transient API / parse hiccup -> retry
             last_err = e
+            msg = str(e)
+            if "429" in msg or "RESOURCE_EXHAUSTED" in msg:   # rate-limited: wait + retry
+                d = re.search(r"retryDelay['\"]?:?\s*['\"]?(\d+)", msg)
+                time.sleep(min(int(d.group(1)) if d else 8, 30))
     if last_err:
         raise last_err
     return []

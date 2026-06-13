@@ -283,16 +283,21 @@ class BrailleTab(ttk.Frame):
 
 # ---------------------------------------------------------------------- batch
 BATCH_MODES = [("两者都要 (图+盲文)", "both"), ("仅图片浮雕", "picture"), ("仅盲文标签", "braille")]
+# how to make each picture: redraw from description (clean) vs extract the PDF figure (faithful)
+BATCH_METHODS = [("重画 (干净)", "redraw"), ("抠原图 (忠实, 需先分析PDF)", "extract")]
 
 
 class BatchTab(ttk.Frame):
     def __init__(self, master):
         super().__init__(master, padding=12)
         self.mode = tk.StringVar(value=BATCH_MODES[0][0])
+        self.method = tk.StringVar(value=BATCH_METHODS[0][0])
         self.size = tk.StringVar(value="120")
         self.precision = tk.StringVar(value="0.1")
         self.style = tk.StringVar(value=STYLES[0][0])
         self.lang = tk.StringVar(value=SCHEMES[0][0])
+        self.pdf_path = None        # set when a PDF is analyzed (needed for 抠原图)
+        self.worklist = []          # full worklist dicts (with page+box) from pdf_analyze
 
         ttk.Label(self, text="清单：每行一个；「想法 | 盲文标签」分别指定图片与盲文（或用下方“从 PDF 分析”自动填入）").grid(
             row=0, column=0, columnspan=4, sticky="w")
@@ -314,6 +319,9 @@ class BatchTab(ttk.Frame):
         ttk.Entry(opt, textvariable=self.size, width=6).grid(row=1, column=3, sticky="w", pady=(6, 0))
         ttk.Label(opt, text="精度 mm/格").grid(row=2, column=0, pady=(6, 0), sticky="w")
         ttk.Entry(opt, textvariable=self.precision, width=6).grid(row=2, column=1, sticky="w", pady=(6, 0))
+        ttk.Label(opt, text="图片做法").grid(row=2, column=2, pady=(6, 0))
+        ttk.Combobox(opt, textvariable=self.method, state="readonly", width=18,
+                     values=[m[0] for m in BATCH_METHODS]).grid(row=2, column=3, sticky="w", pady=(6, 0))
 
         self.pdfbtn = ttk.Button(self, text="📄 从 PDF 分析", command=self._pick_pdf)
         self.pdfbtn.grid(row=3, column=0, sticky="w", pady=8)
@@ -328,16 +336,35 @@ class BatchTab(ttk.Frame):
 
     def _go(self):
         import tempfile
+        import json
         items = self.list.get("1.0", "end").strip()
         if not items:
             messagebox.showwarning("缺少清单", "请输入清单（每行一个）"); return
-        tf = Path(tempfile.gettempdir()) / "tactile_batch_list.txt"
-        tf.write_text(items, encoding="utf-8")
-        cmd = [PY, str(HERE / "batch.py"), str(tf),
-               "--mode", dict(BATCH_MODES)[self.mode.get()],
-               "--size", self.size.get(), "--precision", self.precision.get(),
-               "--style", dict(STYLES)[self.style.get()],
-               "--lang", dict(SCHEMES)[self.lang.get()]]
+        method = dict(BATCH_METHODS)[self.method.get()]
+        mode = dict(BATCH_MODES)[self.mode.get()]
+        tmp = Path(tempfile.gettempdir())
+        if method == "extract":                       # 抠原图：用 PDF 原图
+            if not self.pdf_path or not self.worklist:
+                messagebox.showwarning("需要 PDF", "“抠原图”需先点「📄 从 PDF 分析」选择 PDF。"); return
+            keep = {ln.split("|")[-1].strip() for ln in items.splitlines() if ln.strip()}
+            sel = [it for it in self.worklist
+                   if it.get("title", "").strip() in keep and it.get("box_2d")]
+            if not sel:
+                messagebox.showwarning("无可抠图项", "选中的项缺少图框（box_2d），无法抠原图。"); return
+            wl = tmp / "tactile_pdf_worklist.json"
+            wl.write_text(json.dumps(sel, ensure_ascii=False), encoding="utf-8")
+            cmd = [PY, str(HERE / "pdf_make.py"), self.pdf_path, str(wl),
+                   "--size", self.size.get(), "--precision", self.precision.get(),
+                   "--lang", dict(SCHEMES)[self.lang.get()]]
+            if mode == "picture":
+                cmd += ["--no-braille"]
+        else:                                         # 重画：从描述生成
+            tf = tmp / "tactile_batch_list.txt"
+            tf.write_text(items, encoding="utf-8")
+            cmd = [PY, str(HERE / "batch.py"), str(tf), "--mode", mode,
+                   "--size", self.size.get(), "--precision", self.precision.get(),
+                   "--style", dict(STYLES)[self.style.get()],
+                   "--lang", dict(SCHEMES)[self.lang.get()]]
         self.btn.config(state="disabled", text="⏳ 批量生成中…")
         self.runner.start(cmd)
 
@@ -355,6 +382,7 @@ class BatchTab(ttk.Frame):
         p = filedialog.askopenfilename(filetypes=[("PDF", "*.pdf"), ("All", "*.*")])
         if not p:
             return
+        self.pdf_path = p
         self.pdfbtn.config(state="disabled", text="⏳ 分析中…")
         self._logln(f"📄 分析 PDF: {p}")
         threading.Thread(target=self._analyze, args=(p,), daemon=True).start()
@@ -372,8 +400,15 @@ class BatchTab(ttk.Frame):
         self.list.delete("1.0", "end")
         self.list.insert("1.0", r.stdout.strip() + "\n")
         n = len([ln for ln in r.stdout.splitlines() if ln.strip()])
+        try:                                          # load full worklist (page+box) for 抠原图
+            import json
+            self.worklist = json.loads(
+                Path(self.pdf_path).with_suffix(".worklist.json").read_text(encoding="utf-8"))
+        except Exception:
+            self.worklist = []
         self._logln((r.stderr.strip() or "") + f"\n✓ 已填入 {n} 项，检查/删减后点「批量生成」")
-        messagebox.showinfo("分析完成", f"Gemini 识别出 {n} 项，已填入清单。\n检查/删减后点「批量生成」。")
+        messagebox.showinfo("分析完成", f"Gemini 识别出 {n} 项，已填入清单。\n"
+                            "检查/删减后点「批量生成」。\n（“抠原图”做法可用原图，“重画”做法用描述。）")
 
 
 class App(tk.Tk):
