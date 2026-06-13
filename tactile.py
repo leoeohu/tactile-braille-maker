@@ -135,6 +135,104 @@ def build_heightmap(src: Path, dst: Path, *, invert: bool, threshold,
     return dst
 
 
+# --------------------------------------------------- text -> braille on the plate
+def detect_text(image_path: str, key: str, model: str) -> list:
+    """Use Gemini to find every text string + its bounding box (normalized 0..1)."""
+    from google import genai
+    from google.genai import types
+    import json
+    import re
+
+    data = Path(image_path).read_bytes()
+    ext = Path(image_path).suffix.lower()
+    mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".webp": "image/webp", ".gif": "image/gif"}.get(ext, "image/png")
+    prompt = (
+        "Detect ALL text strings in this image (labels, words, captions, titles). "
+        "Return ONLY a JSON array, each element "
+        '{"text": "<exact text>", "box_2d": [ymin, xmin, ymax, xmax]} '
+        "with box coordinates normalized to 0-1000. Include every distinct text item. "
+        "No prose, no code fences."
+    )
+    client = genai.Client(api_key=key)
+    resp = client.models.generate_content(
+        model=model, contents=[types.Part.from_bytes(data=data, mime_type=mime), prompt])
+    m = re.search(r"\[.*\]", (resp.text or "").strip(), re.S)
+    if not m:
+        return []
+    out = []
+    for it in json.loads(m.group(0)):
+        t = str(it.get("text", "")).strip()
+        b = it.get("box_2d") or it.get("box")
+        if not t or not b or len(b) != 4:
+            continue
+        ymin, xmin, ymax, xmax = [float(v) for v in b]
+        s = 1000.0 if max(ymin, xmin, ymax, xmax) > 1.5 else 1.0
+        out.append({"text": t, "box": (xmin / s, ymin / s, xmax / s, ymax / s)})
+    return out
+
+
+def composite_braille(height_path: Path, src_w: int, src_h: int, detections: list, *,
+                      plate_x: float, plate_y: float, margin: float, relief: float,
+                      lang: str, dot_height: float = 0.6, dot_diam: float = 1.5,
+                      dot_spacing: float = 2.5, cell_pitch: float = 6.0) -> int:
+    """Erase printed text from the height map and stamp standard-spaced braille dots
+    at those positions. Returns how many labels were placed."""
+    import numpy as np
+    from PIL import Image
+    import braille as B
+
+    hm = Image.open(height_path).convert("L")
+    HW, HH = hm.size
+    mpx = round(max(src_w, src_h) * margin)        # padding added by build_heightmap
+    ppm = HW / plate_x                              # px per mm (aspect preserved)
+    ds = dot_spacing * ppm
+    cp = cell_pitch * ppm
+    dot_r = max(1.0, (dot_diam / 2) * ppm)
+    peak = min(1.0, dot_height / relief)            # so displaced dot height == dot_height
+
+    arr = np.asarray(hm, dtype=np.float32) / 255.0
+    R = int(np.ceil(dot_r))
+    yy, xx = np.mgrid[-R:R + 1, -R:R + 1]
+    rr = np.sqrt(xx ** 2 + yy ** 2) / dot_r
+    stamp = peak * np.sqrt(np.clip(1 - rr ** 2, 0.0, 1.0))   # spherical-cap dome
+
+    def paste_max(cx, cy):
+        xi, yi = int(round(cx)) - R, int(round(cy)) - R
+        sx0, sy0 = max(0, -xi), max(0, -yi)
+        dx0, dy0 = max(0, xi), max(0, yi)
+        dx1, dy1 = min(HW, xi + stamp.shape[1]), min(HH, yi + stamp.shape[0])
+        if dx1 <= dx0 or dy1 <= dy0:
+            return
+        sub = stamp[sy0:sy0 + (dy1 - dy0), sx0:sx0 + (dx1 - dx0)]
+        arr[dy0:dy1, dx0:dx1] = np.maximum(arr[dy0:dy1, dx0:dx1], sub)
+
+    placed = 0
+    for det in detections:
+        x0, y0, x1, y1 = det["box"]
+        bx0, by0 = mpx + x0 * src_w, mpx + y0 * src_h
+        bx1, by1 = mpx + x1 * src_w, mpx + y1 * src_h
+        pad = int(0.35 * ds)
+        arr[max(0, int(by0 - pad)):min(HH, int(by1 + pad)),
+            max(0, int(bx0 - pad)):min(HW, int(bx1 + pad))] = 0.0   # erase printed text
+        lng = B.resolve_lang(det["text"], lang)
+        lines = B.translate(det["text"], lng)
+        cells = B.cells_from_braille(lines[0]) if lines else []
+        cy = (by0 + by1) / 2
+        top = cy - ds                                  # center the 3 dot rows on cy
+        for j, dots in enumerate(cells):
+            for d in dots:
+                col = 0 if d in (1, 2, 3) else 1
+                row = (d - 1) % 3
+                paste_max(bx0 + j * cp + col * ds, top + row * ds)
+        if cells:
+            placed += 1
+            if bx0 + len(cells) * cp > HW:
+                print(f"   ⚠️ 盲文“{det['text']}”可能超出右边缘（盲文比原文宽）")
+    Image.fromarray((np.clip(arr, 0, 1) * 255).astype("uint8"), "L").save(height_path)
+    return placed
+
+
 # -------------------------------------------------------------- blender (solid)
 def run_blender(heightmap: Path, out_stl: Path, *, size_x: float, size_y: float,
                 base: float, relief: float, res: int) -> None:
@@ -188,6 +286,14 @@ def main() -> None:
                     help="flat border as fraction of side (each edge)")
     ap.add_argument("--keep", action="store_true",
                     help="keep intermediate generated.png / heightmap.png next to the STL")
+    # text -> braille
+    ap.add_argument("--braille-text", action="store_true",
+                    help="detect text in the image and emboss it as braille instead of glyphs "
+                         "(best with --use-image-directly so positions match)")
+    ap.add_argument("--braille-lang", default="auto",
+                    help="braille scheme for --braille-text (auto/zh/en/...; 中文→国家通用盲文)")
+    ap.add_argument("--braille-dot-height", type=float, default=0.6,
+                    help="braille dot height in mm (standard ~0.6)")
     args = ap.parse_args()
 
     if not args.idea and not args.image:
@@ -247,6 +353,30 @@ def main() -> None:
     longer = max(hw, hh)
     plate_x = round(args.size * hw / longer, 2)
     plate_y = round(args.size * hh / longer, 2)
+
+    # ---- 2.5 detect text -> emboss braille (optional)
+    if args.braille_text:
+        if not cfg.get("GEMINI_API_KEY"):
+            print("   ⚠️ 跳过盲文翻译: 缺少 GEMINI_API_KEY")
+        else:
+            from PIL import Image as _SI
+            with _SI.open(source) as _si:
+                src_w, src_h = _si.size
+            print(f"[3.5/4] detecting text via Gemini ({args.gemini_model}) -> braille ...")
+            try:
+                dets = detect_text(str(source), cfg["GEMINI_API_KEY"], args.gemini_model)
+            except Exception as e:
+                dets = []
+                print(f"   ⚠️ 文字检测失败: {e}")
+            if dets:
+                print("   找到文字: " + ", ".join(f"“{d['text']}”" for d in dets))
+                n = composite_braille(height_png, src_w, src_h, dets,
+                                      plate_x=plate_x, plate_y=plate_y, margin=args.margin,
+                                      relief=args.relief, lang=args.braille_lang,
+                                      dot_height=args.braille_dot_height)
+                print(f"   已嵌入 {n} 处盲文（原文字已抹平）")
+            else:
+                print("   未检测到文字，跳过盲文")
 
     # ---- 3. displace + solidify + export in Blender
     print(f"[4/4] Blender displace -> STL "

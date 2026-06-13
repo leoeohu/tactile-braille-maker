@@ -94,6 +94,7 @@ class PictureTab(ttk.Frame):
         self.base = tk.StringVar(value="3")
         self.relief = tk.StringVar(value="1.5")
         self.precision = tk.StringVar(value=PRECISION[0][0])
+        self.braille_text = tk.BooleanVar(value=False)
         self._preview_img = None
 
         ttk.Label(self, text="想法 / Idea（要做成浮雕的内容）").grid(row=0, column=0, columnspan=4, sticky="w")
@@ -119,6 +120,9 @@ class PictureTab(ttk.Frame):
             row=1, column=1, columnspan=4, sticky="w", pady=(8, 0))
         ttk.Label(box, text="（短边按图片比例自动）", foreground="#777").grid(
             row=1, column=5, columnspan=4, sticky="w", padx=(12, 0), pady=(8, 0))
+        ttk.Checkbutton(box, text="把图中所有文字翻译成盲文（带文字的图建议配合“直接用此图”）",
+                        variable=self.braille_text).grid(
+            row=2, column=0, columnspan=9, sticky="w", pady=(8, 0))
 
         self.btn = ttk.Button(self, text="🛠  生成浮雕 STL", command=self._go)
         self.btn.grid(row=4, column=0, columnspan=2, sticky="w", pady=4)
@@ -152,6 +156,8 @@ class PictureTab(ttk.Frame):
             cmd += ["--image", img]
             if self.use_direct.get():
                 cmd += ["--use-image-directly"]
+        if self.braille_text.get():
+            cmd += ["--braille-text"]
         self.btn.config(state="disabled", text="⏳ 生成中…")
         self.runner.start(cmd)
 
