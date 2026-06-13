@@ -125,26 +125,24 @@ def build_heightmap(src: Path, dst: Path, *, invert: bool, threshold,
         im = im.filter(ImageFilter.MaxFilter(thicken * 2 + 1))
     if blur > 0:                                    # soften edges -> printable slopes
         im = im.filter(ImageFilter.GaussianBlur(blur))
-    if margin > 0:                                  # flat (black) border around the relief
-        side = im.size[0]
-        inner = max(1, int(round(side * (1 - 2 * margin))))
-        small = im.resize((inner, inner), Image.LANCZOS)
-        canvas = Image.new("L", (side, side), 0)
-        off = (side - inner) // 2
-        canvas.paste(small, (off, off))
+    if margin > 0:                                  # flat (black) border, ASPECT PRESERVED
+        w, h = im.size
+        mpx = int(round(max(w, h) * margin))
+        canvas = Image.new("L", (w + 2 * mpx, h + 2 * mpx), 0)
+        canvas.paste(im, (mpx, mpx))               # no resize -> no squishing
         im = canvas
     im.save(dst)
     return dst
 
 
 # -------------------------------------------------------------- blender (solid)
-def run_blender(heightmap: Path, out_stl: Path, *, size: float, base: float,
-                relief: float, res: int) -> None:
+def run_blender(heightmap: Path, out_stl: Path, *, size_x: float, size_y: float,
+                base: float, relief: float, res: int) -> None:
     if not Path(BLENDER).exists():
         sys.exit(f"Blender not found at {BLENDER!r}. Set $BLENDER to its path.")
     cmd = [BLENDER, "-b", "--python", str(HERE / "blender_displace.py"), "--",
            str(heightmap), str(out_stl),
-           str(size), str(base), str(relief), str(res)]
+           str(size_x), str(size_y), str(base), str(relief), str(res)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     for line in proc.stdout.splitlines():
         if line.startswith("[blender]"):
@@ -167,10 +165,12 @@ def main() -> None:
     ap.add_argument("--out", help="output .stl path "
                                   "(default: out/<slug>_<timestamp>.stl)")
     # physical dimensions (mm)
-    ap.add_argument("--size", type=float, default=120.0, help="plate side length (mm)")
+    ap.add_argument("--size", type=float, default=120.0,
+                    help="LONGER plate side (mm); shorter side follows the image aspect")
     ap.add_argument("--base", type=float, default=3.0, help="solid base thickness (mm)")
     ap.add_argument("--relief", type=float, default=1.5, help="max relief height (mm)")
-    ap.add_argument("--res", type=int, default=400, help="grid subdivisions per side")
+    ap.add_argument("--res", type=int, default=600,
+                    help="precision: subdivisions along the longer side (higher = finer/slower)")
     # image generation
     ap.add_argument("--model", default="flux", help="Pollination model")
     ap.add_argument("--gemini-model", default="gemini-2.5-flash", help="Gemini vision model")
@@ -240,15 +240,23 @@ def main() -> None:
                     thicken=args.thicken, blur=args.blur, margin=args.margin)
     print(f"      -> {height_png}")
 
+    # ---- plate dimensions follow the heightmap aspect ratio (no squishing)
+    from PIL import Image as _Img
+    with _Img.open(height_png) as _hm:
+        hw, hh = _hm.size
+    longer = max(hw, hh)
+    plate_x = round(args.size * hw / longer, 2)
+    plate_y = round(args.size * hh / longer, 2)
+
     # ---- 3. displace + solidify + export in Blender
     print(f"[4/4] Blender displace -> STL "
-          f"(size={args.size}mm base={args.base}mm relief={args.relief}mm res={args.res}) ...")
-    run_blender(height_png, out_stl, size=args.size, base=args.base,
-                relief=args.relief, res=args.res)
+          f"(plate={plate_x}×{plate_y}mm base={args.base}mm relief={args.relief}mm res={args.res}) ...")
+    run_blender(height_png, out_stl, size_x=plate_x, size_y=plate_y,
+                base=args.base, relief=args.relief, res=args.res)
 
     mb = out_stl.stat().st_size / 1e6
     print(f"\n✅ {out_stl}  ({mb:.1f} MB)")
-    print(f"   plate {args.size}×{args.size} mm, base {args.base} mm, "
+    print(f"   plate {plate_x}×{plate_y} mm, base {args.base} mm, "
           f"relief up to {args.relief} mm — print flat side down, no supports.")
     if args.keep and not args.use_image_directly:
         print(f"   intermediates: {gen_png.name}, {height_png.name}")

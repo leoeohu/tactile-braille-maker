@@ -2,11 +2,14 @@
 
 Run by tactile.py as:
     blender -b --python blender_displace.py -- <heightmap.png> <out.stl> \
-            <size_mm> <base_mm> <relief_mm> <res>
+            <size_x_mm> <size_y_mm> <base_mm> <relief_mm> <res>
 
 Conventions
 -----------
 * 1 Blender unit == 1 mm (STL has no units; slicers read mm). No scene-unit scaling.
+* Plate is size_x x size_y (its aspect matches the heightmap so the relief is NOT
+  squished). `res` is the subdivision count along the LONGER side; the shorter side
+  gets a proportional count so vertex density (precision) is uniform.
 * Heightmap: bright = raised. Black (0) -> displacement 0 (stays at z=0 = base top).
   White (1) -> +relief_mm. The image MUST have a black (0) border so the plate
   perimeter sits flat at z=0; tactile.py guarantees this with a margin.
@@ -19,19 +22,28 @@ import bmesh
 
 argv = sys.argv[sys.argv.index("--") + 1:]
 heightmap, out_stl = argv[0], argv[1]
-size = float(argv[2])     # plate side length, mm
-base = float(argv[3])     # solid base thickness below the relief, mm
-relief = float(argv[4])   # max relief height above the base, mm
-res = int(argv[5])        # grid subdivisions per side
+size_x = float(argv[2])   # plate width, mm
+size_y = float(argv[3])   # plate height, mm
+base = float(argv[4])     # solid base thickness below the relief, mm
+relief = float(argv[5])   # max relief height above the base, mm
+res = int(argv[6])        # subdivisions along the longer side
+
+# proportional subdivisions -> uniform vertex density on a rectangular plate
+longer = max(size_x, size_y)
+res_x = max(2, round(res * size_x / longer))
+res_y = max(2, round(res * size_y / longer))
 
 # --- clean scene ---------------------------------------------------------
 bpy.ops.wm.read_factory_settings(use_empty=True)
 
-# --- subdivided plane ----------------------------------------------------
-bpy.ops.mesh.primitive_grid_add(x_subdivisions=res, y_subdivisions=res, size=size)
+# --- subdivided plane (rectangular = aspect-correct) ---------------------
+bpy.ops.mesh.primitive_grid_add(x_subdivisions=res_x, y_subdivisions=res_y, size=size_x)
 obj = bpy.context.active_object
 obj.name = "TactilePlate"
-print(f"[blender] grid verts={len(obj.data.vertices)}")
+if size_y != size_x:                       # stretch Y to the real plate height, then bake it in
+    obj.scale.y = size_y / size_x
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+print(f"[blender] plate {size_x:.1f}x{size_y:.1f}mm  grid {res_x}x{res_y} verts={len(obj.data.vertices)}")
 
 # --- displacement from the heightmap ------------------------------------
 img = bpy.data.images.load(heightmap)

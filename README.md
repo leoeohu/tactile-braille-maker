@@ -79,14 +79,17 @@ $PY tactile.py --idea "a maple leaf" --size 150 --base 2.5 --relief 1.8 --out ~/
 
 STLs land in `out/` by default. `--keep` saves the generated picture + height map too.
 
+The plate **keeps the image's aspect ratio** — `--size` is the *longer* side and the
+shorter side follows the picture, so the relief is never squished.
+
 ## Key options (`tactile.py -h` for all)
 
 | flag | default | meaning |
 |------|---------|---------|
-| `--size` | 120 | plate side length (mm) |
+| `--size` | 120 | **longer** plate side (mm); shorter side follows the image aspect |
 | `--base` | 3.0 | solid base thickness (mm) |
 | `--relief` | 1.5 | max raised height (mm) |
-| `--res` | 400 | grid subdivisions per side (detail/quality) |
+| `--res` | 600 | **precision**: subdivisions along the longer side (higher = finer/slower) |
 | `--threshold` | 128 | binarize cutoff 0–255; `-1` = keep smooth grayscale relief |
 | `--thicken` | 2 | widen raised lines by N px so fingers can feel them |
 | `--blur` | 1.0 | edge smoothing (printability) |

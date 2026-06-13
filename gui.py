@@ -37,6 +37,14 @@ def open_in_finder(path: Path):
     subprocess.run(["open", "-R", str(path)] if path.exists() else ["open", str(OUT)])
 
 
+# precision presets for the relief plate: label -> (mesh subdivisions, generated-image px)
+PRECISION = [
+    ("标准 (快)", 600, 1024),
+    ("高", 900, 1280),
+    ("超高 (慢)", 1200, 1600),
+]
+
+
 class Runner:
     """Run a subprocess in a thread, stream its stdout into a Tk text widget."""
     def __init__(self, widget, log, on_done):
@@ -85,6 +93,7 @@ class PictureTab(ttk.Frame):
         self.size = tk.StringVar(value="120")
         self.base = tk.StringVar(value="3")
         self.relief = tk.StringVar(value="1.5")
+        self.precision = tk.StringVar(value=PRECISION[0][0])
         self._preview_img = None
 
         ttk.Label(self, text="想法 / Idea（要做成浮雕的内容）").grid(row=0, column=0, columnspan=4, sticky="w")
@@ -98,12 +107,18 @@ class PictureTab(ttk.Frame):
         ttk.Checkbutton(self, text="直接用此图(不重画)", variable=self.use_direct).grid(row=2, column=3, sticky="w")
 
         box = ttk.Frame(self); box.grid(row=3, column=0, columnspan=4, sticky="w", pady=8)
-        for i, (lab, var, unit) in enumerate([("板边长", self.size, "mm"),
+        for i, (lab, var, unit) in enumerate([("板长边", self.size, "mm"),
                                               ("底板厚", self.base, "mm"),
                                               ("凸起高", self.relief, "mm")]):
             ttk.Label(box, text=lab).grid(row=0, column=i*3, padx=(0 if i == 0 else 12, 2))
             ttk.Entry(box, textvariable=var, width=6).grid(row=0, column=i*3+1)
             ttk.Label(box, text=unit).grid(row=0, column=i*3+2, padx=(2, 0))
+        ttk.Label(box, text="精度").grid(row=1, column=0, pady=(8, 0), sticky="w")
+        ttk.Combobox(box, textvariable=self.precision, state="readonly", width=10,
+                     values=[p[0] for p in PRECISION]).grid(
+            row=1, column=1, columnspan=4, sticky="w", pady=(8, 0))
+        ttk.Label(box, text="（短边按图片比例自动）", foreground="#777").grid(
+            row=1, column=5, columnspan=4, sticky="w", padx=(12, 0), pady=(8, 0))
 
         self.btn = ttk.Button(self, text="🛠  生成浮雕 STL", command=self._go)
         self.btn.grid(row=4, column=0, columnspan=2, sticky="w", pady=4)
@@ -127,8 +142,10 @@ class PictureTab(ttk.Frame):
         img = self.image_path.get().strip()
         if not idea and not img:
             messagebox.showwarning("缺少输入", "请填写想法或选择图片"); return
+        res, gen = next((r, g) for (lab, r, g) in PRECISION if lab == self.precision.get())
         cmd = [PY, str(HERE / "tactile.py"), "--keep",
-               "--size", self.size.get(), "--base", self.base.get(), "--relief", self.relief.get()]
+               "--size", self.size.get(), "--base", self.base.get(), "--relief", self.relief.get(),
+               "--res", str(res), "--gen-size", str(gen)]
         if idea:
             cmd += ["--idea", idea]
         if img:
