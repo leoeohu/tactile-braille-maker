@@ -27,12 +27,27 @@ Standard dimensions baked in (override with flags):
 import argparse
 import math
 import os
+import shutil
 import struct
 import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+
+
+def _find_lou() -> str:
+    """Locate lou_translate even when launched without a full PATH (e.g. from Finder)."""
+    p = shutil.which("lou_translate")
+    if p:
+        return p
+    for c in ("/opt/homebrew/bin/lou_translate", "/usr/local/bin/lou_translate"):
+        if Path(c).exists():
+            return c
+    return "lou_translate"   # let it fail loudly with a clear message in translate()
+
+
+LOU = _find_lou()
 
 # liblouis tables (installed by `brew install liblouis`)
 TABLES = {
@@ -76,9 +91,12 @@ def translate(text: str, lang: str) -> list[str]:
         if not line:
             lines.append("")
             continue
-        res = subprocess.run(
-            ["lou_translate", f"unicode.dis,{table}"],
-            input=line, capture_output=True, text=True)
+        try:
+            res = subprocess.run(
+                [LOU, f"unicode.dis,{table}"],
+                input=line, capture_output=True, text=True)
+        except FileNotFoundError:
+            sys.exit("lou_translate not found — install liblouis:  brew install liblouis")
         if res.returncode != 0:
             sys.exit(f"lou_translate failed ({table}): {res.stderr.strip()}")
         lines.append(res.stdout.rstrip("\n"))

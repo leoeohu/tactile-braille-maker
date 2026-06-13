@@ -50,11 +50,30 @@ API keys (free): [Pollinations](https://pollinations.ai) for image generation,
 python gui.py            # run with the venv that has the deps installed
 ```
 
-A two-tab window:
-* **图片浮雕板** — type an idea (and/or pick a reference image), set size/base/relief, hit
-  generate; shows the height-map preview and writes the STL to `out/`.
+A three-tab window:
+* **图片浮雕板** — type an idea (and/or pick a reference image), set size / precision (mm) /
+  style (line vs grayscale relief), hit generate; shows the height-map preview, writes the STL.
 * **盲文标签** — type text, choose the braille scheme (国家通用盲文 by default), with a
-  **live dot preview**; generate writes the STL to `out/`.
+  **live dot preview**; generate writes the STL.
+* **批量** — paste a list (one item per line), pick mode (picture / braille / both), and
+  generate them all at once. See below.
+
+## Batch (批量) — for educators making many items
+
+```bash
+python batch.py words.txt --mode both --size 120 --lang auto      # or --mode picture / braille
+```
+
+`words.txt` is one item per line; an optional `|` separates the picture idea from the braille
+label (so an English-drawn picture can carry a Chinese label). Output goes to
+`out/batch_<timestamp>/`, with picture and braille files named so they pair up.
+
+```
+butterfly | 蝴蝶
+a maple leaf | 枫叶
+sun | 太阳
+# lines starting with # are ignored
+```
 
 ## Usage (command line)
 

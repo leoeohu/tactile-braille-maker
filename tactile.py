@@ -160,28 +160,60 @@ def detect_text(image_path: str, key: str, model: str) -> list:
     mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
             ".webp": "image/webp", ".gif": "image/gif"}.get(ext, "image/png")
     prompt = (
-        "Detect ALL text strings in this image (labels, words, captions, titles). "
-        "Return ONLY a JSON array, each element "
-        '{"text": "<exact text>", "box_2d": [ymin, xmin, ymax, xmax]} '
-        "with box coordinates normalized to 0-1000. Include every distinct text item. "
-        "No prose, no code fences."
+        "Detect every text string in this image (labels, words, captions, titles). "
+        "For each, give the exact text and its bounding box as [ymin, xmin, ymax, xmax] "
+        "normalized to 0-1000. Include every distinct text item; if there is no text, "
+        "return an empty array."
     )
+    # Force a valid JSON array of {text, box_2d} so parsing never depends on prose/fences.
+    schema = types.Schema(
+        type=types.Type.ARRAY,
+        items=types.Schema(
+            type=types.Type.OBJECT,
+            required=["text", "box_2d"],
+            properties={
+                "text": types.Schema(type=types.Type.STRING),
+                "box_2d": types.Schema(type=types.Type.ARRAY,
+                                       items=types.Schema(type=types.Type.NUMBER)),
+            },
+        ),
+    )
+    cfg = types.GenerateContentConfig(response_mime_type="application/json",
+                                      response_schema=schema)
     client = genai.Client(api_key=key)
-    resp = client.models.generate_content(
-        model=model, contents=[types.Part.from_bytes(data=data, mime_type=mime), prompt])
-    m = re.search(r"\[.*\]", (resp.text or "").strip(), re.S)
-    if not m:
-        return []
-    out = []
-    for it in json.loads(m.group(0), strict=False):   # tolerate control chars in strings
-        t = str(it.get("text", "")).strip()
-        b = it.get("box_2d") or it.get("box")
-        if not t or not b or len(b) != 4:
-            continue
-        ymin, xmin, ymax, xmax = [float(v) for v in b]
-        s = 1000.0 if max(ymin, xmin, ymax, xmax) > 1.5 else 1.0
-        out.append({"text": t, "box": (xmin / s, ymin / s, xmax / s, ymax / s)})
-    return out
+
+    def parse(text):
+        m = re.search(r"\[.*\]", (text or "").strip(), re.S)
+        if not m:
+            return []
+        out = []
+        for it in json.loads(m.group(0), strict=False):
+            t = str(it.get("text", "")).strip()
+            b = it.get("box_2d") or it.get("box")
+            if not t or not b or len(b) != 4:
+                continue
+            if not any(c.isalnum() for c in t):    # skip misread junk (○○, ⁇, □□ ...)
+                continue
+            ymin, xmin, ymax, xmax = [float(v) for v in b]
+            s = 1000.0 if max(ymin, xmin, ymax, xmax) > 1.5 else 1.0
+            out.append({"text": t, "box": (xmin / s, ymin / s, xmax / s, ymax / s)})
+        return out
+
+    last_err = None
+    for attempt in range(3):                       # retry: Gemini sometimes returns nothing
+        try:
+            resp = client.models.generate_content(
+                model=model,
+                contents=[types.Part.from_bytes(data=data, mime_type=mime), prompt],
+                config=cfg)
+            out = parse(resp.text)
+            if out:
+                return out
+        except Exception as e:                     # transient API / parse hiccup -> retry
+            last_err = e
+    if last_err:
+        raise last_err
+    return []
 
 
 def composite_braille(height_path: Path, detections: list, *,

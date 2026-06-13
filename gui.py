@@ -281,6 +281,70 @@ class BrailleTab(ttk.Frame):
             messagebox.showerror("失败", "生成失败，请看下方日志")
 
 
+# ---------------------------------------------------------------------- batch
+BATCH_MODES = [("两者都要 (图+盲文)", "both"), ("仅图片浮雕", "picture"), ("仅盲文标签", "braille")]
+
+
+class BatchTab(ttk.Frame):
+    def __init__(self, master):
+        super().__init__(master, padding=12)
+        self.mode = tk.StringVar(value=BATCH_MODES[0][0])
+        self.size = tk.StringVar(value="120")
+        self.precision = tk.StringVar(value="0.1")
+        self.style = tk.StringVar(value=STYLES[0][0])
+        self.lang = tk.StringVar(value=SCHEMES[0][0])
+
+        ttk.Label(self, text="清单：每行一个；可用「想法 | 盲文标签」分别指定图片与盲文").grid(
+            row=0, column=0, columnspan=4, sticky="w")
+        self.list = tk.Text(self, height=8, wrap="word")
+        self.list.grid(row=1, column=0, columnspan=4, sticky="nsew", pady=(2, 8))
+        self.list.insert("1.0", "butterfly | 蝴蝶\na maple leaf | 枫叶\nsun | 太阳\n")
+
+        opt = ttk.Frame(self); opt.grid(row=2, column=0, columnspan=4, sticky="w")
+        ttk.Label(opt, text="模式").grid(row=0, column=0, sticky="w")
+        ttk.Combobox(opt, textvariable=self.mode, state="readonly", width=16,
+                     values=[m[0] for m in BATCH_MODES]).grid(row=0, column=1, padx=(2, 12))
+        ttk.Label(opt, text="风格").grid(row=0, column=2)
+        ttk.Combobox(opt, textvariable=self.style, state="readonly", width=15,
+                     values=[s[0] for s in STYLES]).grid(row=0, column=3, padx=(2, 0))
+        ttk.Label(opt, text="盲文方案").grid(row=1, column=0, pady=(6, 0), sticky="w")
+        ttk.Combobox(opt, textvariable=self.lang, state="readonly", width=16,
+                     values=[s[0] for s in SCHEMES]).grid(row=1, column=1, padx=(2, 12), pady=(6, 0))
+        ttk.Label(opt, text="板长边").grid(row=1, column=2, pady=(6, 0))
+        ttk.Entry(opt, textvariable=self.size, width=6).grid(row=1, column=3, sticky="w", pady=(6, 0))
+        ttk.Label(opt, text="精度 mm/格").grid(row=2, column=0, pady=(6, 0), sticky="w")
+        ttk.Entry(opt, textvariable=self.precision, width=6).grid(row=2, column=1, sticky="w", pady=(6, 0))
+
+        self.btn = ttk.Button(self, text="📦 批量生成", command=self._go)
+        self.btn.grid(row=3, column=0, columnspan=2, sticky="w", pady=8)
+        ttk.Button(self, text="📂 打开输出文件夹", command=lambda: open_in_finder(OUT)).grid(
+            row=3, column=2, columnspan=2, sticky="w")
+        self.log = tk.Text(self, height=12, state="disabled", bg="#111", fg="#9f9", wrap="word")
+        self.log.grid(row=4, column=0, columnspan=4, sticky="nsew", pady=6)
+        self.columnconfigure(0, weight=1); self.rowconfigure(1, weight=1); self.rowconfigure(4, weight=2)
+        self.runner = Runner(self, self.log, self._done)
+
+    def _go(self):
+        import tempfile
+        items = self.list.get("1.0", "end").strip()
+        if not items:
+            messagebox.showwarning("缺少清单", "请输入清单（每行一个）"); return
+        tf = Path(tempfile.gettempdir()) / "tactile_batch_list.txt"
+        tf.write_text(items, encoding="utf-8")
+        cmd = [PY, str(HERE / "batch.py"), str(tf),
+               "--mode", dict(BATCH_MODES)[self.mode.get()],
+               "--size", self.size.get(), "--precision", self.precision.get(),
+               "--style", dict(STYLES)[self.style.get()],
+               "--lang", dict(SCHEMES)[self.lang.get()]]
+        self.btn.config(state="disabled", text="⏳ 批量生成中…")
+        self.runner.start(cmd)
+
+    def _done(self, code):
+        self.btn.config(state="normal", text="📦 批量生成")
+        messagebox.showinfo("完成", "批量生成结束，请看日志与输出文件夹"
+                            if code == 0 else "部分项目失败，请看日志")
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -289,6 +353,7 @@ class App(tk.Tk):
         nb = ttk.Notebook(self); nb.pack(fill="both", expand=True, padx=10, pady=10)
         nb.add(PictureTab(nb), text="   图片浮雕板   ")
         nb.add(BrailleTab(nb), text="   盲文标签   ")
+        nb.add(BatchTab(nb), text="   批量   ")
 
 
 if __name__ == "__main__":
