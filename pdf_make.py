@@ -41,6 +41,8 @@ def main():
     ap.add_argument("--relief", default="1.5")
     ap.add_argument("--precision", default="0.12")
     ap.add_argument("--lang", default="auto")
+    ap.add_argument("--text-engine", choices=["gemini", "tesseract"], default="tesseract",
+                    help="OCR for in-place braille (tesseract = local, no API)")
     ap.add_argument("--no-braille", action="store_true", help="do not emboss labels as braille")
     args = ap.parse_args()
 
@@ -86,7 +88,7 @@ def main():
                "--out", str(out), "--size", args.size, "--base", args.base,
                "--relief", args.relief, "--precision", args.precision]
         if not args.no_braille:
-            cmd += ["--braille-text", "--braille-lang", args.lang]
+            cmd += ["--braille-text", "--braille-lang", args.lang, "--text-engine", args.text_engine]
         print(f"\n{tag} 🖼→⠿ 抠原图: {title} (p{page})", flush=True)
         r = subprocess.run(cmd)
         ok, fail = (ok + 1, fail) if r.returncode == 0 else (ok, fail + 1)

@@ -103,7 +103,23 @@ python pdf_make.py 选图.pdf 选图.worklist.json --no-braille       # figure o
 > **Gemini quota:** the free tier allows ~20 requests/day. PDF analysis is 1 request, but the
 > 抠原图 braille step is 1 request per figure, so large batches can hit the cap (calls retry with
 > backoff, and a figure still prints without braille if its detection fails). Enable billing on the
-> API key for big runs.
+> API key for big runs — or use the **local, no-API** path below.
+
+### Fully local — no API, no quota (recommended for big batches)
+
+Extract the figures straight out of the PDF with PyMuPDF (no API), curate the folder, then
+batch them — make as many variants as you like:
+
+```bash
+python pdf_extract.py 选图.pdf                       # -> 选图_figures/  (one PNG per figure)
+# delete unwanted files, rename them to 中文标题 (the filename becomes the braille label)
+python batch.py --images 选图_figures --variants line,relief   # 2 versions each, no API
+```
+
+In the GUI **批量** tab: **📁 PDF→图片(本地)** extracts locally and opens the folder; after you
+tidy it, tick **多版本** if wanted and click **📦 批量生成** (图片做法 = 本地文件夹). Braille
+*labels* (`braille.py`) are always local; only Gemini in-place OCR needs the cloud (Tesseract is
+available offline via `--text-engine tesseract` but is far less accurate on small/CJK labels).
 
 ## Usage (command line)
 

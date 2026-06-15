@@ -221,6 +221,44 @@ def detect_text(image_path: str, key: str, model: str) -> list:
     return []
 
 
+def detect_text_tesseract(image_path: str, langs: str = "chi_sim+eng") -> list:
+    """Local OCR (Tesseract) — no API. Returns [{text, box(0..1)}] grouped per text line."""
+    import re
+    import shutil
+    import pytesseract
+    from PIL import Image
+
+    cmd = shutil.which("tesseract") or "/opt/homebrew/bin/tesseract"
+    if Path(cmd).exists():
+        pytesseract.pytesseract.tesseract_cmd = cmd
+    img = Image.open(image_path)
+    W, H = img.size
+    d = pytesseract.image_to_data(img, lang=langs, output_type=pytesseract.Output.DICT)
+    groups = {}
+    for i in range(len(d["text"])):
+        t = d["text"][i].strip()
+        try:
+            conf = float(d["conf"][i])
+        except ValueError:
+            conf = -1
+        if not t or conf < 40:
+            continue
+        key = (d["block_num"][i], d["par_num"][i], d["line_num"][i])
+        x, y, w, h = d["left"][i], d["top"][i], d["width"][i], d["height"][i]
+        g = groups.setdefault(key, {"t": [], "x0": 1e9, "y0": 1e9, "x1": 0, "y1": 0})
+        g["t"].append(t)
+        g["x0"], g["y0"] = min(g["x0"], x), min(g["y0"], y)
+        g["x1"], g["y1"] = max(g["x1"], x + w), max(g["y1"], y + h)
+    out = []
+    for g in groups.values():
+        t = " ".join(g["t"]).strip()
+        t = re.sub(r"(?<=[一-鿿])\s+(?=[一-鿿])", "", t)  # no spaces between CJK
+        if not any(c.isalnum() for c in t):
+            continue
+        out.append({"text": t, "box": (g["x0"] / W, g["y0"] / H, g["x1"] / W, g["y1"] / H)})
+    return out
+
+
 def composite_braille(height_path: Path, detections: list, *,
                       plate_x: float, plate_y: float, margin: float, relief: float,
                       lang: str, dot_height: float = 0.6, dot_diam: float = 1.5,
@@ -351,6 +389,8 @@ def main() -> None:
                          "(best with --use-image-directly so positions match)")
     ap.add_argument("--braille-lang", default="auto",
                     help="braille scheme for --braille-text (auto/zh/en/...; 中文→国家通用盲文)")
+    ap.add_argument("--text-engine", choices=["gemini", "tesseract"], default="gemini",
+                    help="OCR for --braille-text: gemini (cloud) or tesseract (local, no API)")
     ap.add_argument("--braille-dot-height", type=float, default=0.6,
                     help="braille dot height in mm (standard ~0.6)")
     args = ap.parse_args()
@@ -441,24 +481,28 @@ def main() -> None:
 
     # ---- 2.5 detect text -> emboss braille (optional)
     if args.braille_text:
-        if not cfg.get("GEMINI_API_KEY"):
-            print("   ⚠️ 跳过盲文翻译: 缺少 GEMINI_API_KEY")
-        else:
-            print(f"[3.5/4] detecting text via Gemini ({args.gemini_model}) -> braille ...")
-            try:
-                dets = detect_text(str(source), cfg["GEMINI_API_KEY"], args.gemini_model)
-            except Exception as e:
-                dets = []
-                print(f"   ⚠️ 文字检测失败: {e}")
-            if dets:
-                print("   找到文字: " + ", ".join(f"“{d['text']}”" for d in dets))
-                n = composite_braille(height_png, dets,
-                                      plate_x=plate_x, plate_y=plate_y, margin=args.margin,
-                                      relief=args.relief, lang=args.braille_lang,
-                                      dot_height=args.braille_dot_height)
-                print(f"   已嵌入 {n} 处盲文（原文字已抹平）")
+        engine = args.text_engine
+        if engine == "gemini" and not cfg.get("GEMINI_API_KEY"):
+            print("   ⚠️ 无 GEMINI_API_KEY，改用本地 OCR (tesseract)")
+            engine = "tesseract"
+        print(f"[3.5/4] detecting text ({engine}) -> braille ...")
+        try:
+            if engine == "tesseract":
+                dets = detect_text_tesseract(str(source))
             else:
-                print("   未检测到文字，跳过盲文")
+                dets = detect_text(str(source), cfg["GEMINI_API_KEY"], args.gemini_model)
+        except Exception as e:
+            dets = []
+            print(f"   ⚠️ 文字检测失败: {e}")
+        if dets:
+            print("   找到文字: " + ", ".join(f"“{d['text']}”" for d in dets))
+            n = composite_braille(height_png, dets,
+                                  plate_x=plate_x, plate_y=plate_y, margin=args.margin,
+                                  relief=args.relief, lang=args.braille_lang,
+                                  dot_height=args.braille_dot_height)
+            print(f"   已嵌入 {n} 处盲文（原文字已抹平）")
+        else:
+            print("   未检测到文字，跳过盲文")
 
     # ---- 3. displace + solidify + export in Blender
     print(f"[4/4] Blender displace -> STL "

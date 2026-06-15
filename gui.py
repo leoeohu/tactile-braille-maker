@@ -284,7 +284,9 @@ class BrailleTab(ttk.Frame):
 # ---------------------------------------------------------------------- batch
 BATCH_MODES = [("两者都要 (图+盲文)", "both"), ("仅图片浮雕", "picture"), ("仅盲文标签", "braille")]
 # how to make each picture: redraw from description (clean) vs extract the PDF figure (faithful)
-BATCH_METHODS = [("重画 (干净)", "redraw"), ("抠原图 (忠实, 需先分析PDF)", "extract")]
+BATCH_METHODS = [("重画 (描述→AI)", "redraw"),
+                 ("抠原图 (Gemini定位)", "extract"),
+                 ("本地图片文件夹 (免API)", "local")]
 
 
 class BatchTab(ttk.Frame):
@@ -298,6 +300,8 @@ class BatchTab(ttk.Frame):
         self.lang = tk.StringVar(value=SCHEMES[0][0])
         self.pdf_path = None        # set when a PDF is analyzed (needed for 抠原图)
         self.worklist = []          # full worklist dicts (with page+box) from pdf_analyze
+        self.figures_dir = None     # folder of locally-extracted figures (本地 method)
+        self.variants = tk.BooleanVar(value=False)   # make line+relief versions
 
         ttk.Label(self, text="清单：每行一个；「想法 | 盲文标签」分别指定图片与盲文（或用下方“从 PDF 分析”自动填入）").grid(
             row=0, column=0, columnspan=4, sticky="w")
@@ -322,13 +326,17 @@ class BatchTab(ttk.Frame):
         ttk.Label(opt, text="图片做法").grid(row=2, column=2, pady=(6, 0))
         ttk.Combobox(opt, textvariable=self.method, state="readonly", width=18,
                      values=[m[0] for m in BATCH_METHODS]).grid(row=2, column=3, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(opt, text="多版本（线条+灰度各出一个）", variable=self.variants).grid(
+            row=3, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
-        self.pdfbtn = ttk.Button(self, text="📄 从 PDF 分析", command=self._pick_pdf)
+        self.pdfbtn = ttk.Button(self, text="📄 从PDF分析(Gemini)", command=self._pick_pdf)
         self.pdfbtn.grid(row=3, column=0, sticky="w", pady=8)
+        self.exbtn = ttk.Button(self, text="📁 PDF→图片(本地)", command=self._extract_pdf)
+        self.exbtn.grid(row=3, column=1, sticky="w", pady=8)
         self.btn = ttk.Button(self, text="📦 批量生成", command=self._go)
-        self.btn.grid(row=3, column=1, sticky="w", pady=8)
-        ttk.Button(self, text="📂 打开输出文件夹", command=lambda: open_in_finder(OUT)).grid(
-            row=3, column=2, columnspan=2, sticky="w")
+        self.btn.grid(row=3, column=2, sticky="w", pady=8)
+        ttk.Button(self, text="📂 输出", command=lambda: open_in_finder(OUT)).grid(
+            row=3, column=3, sticky="w")
         self.log = tk.Text(self, height=12, state="disabled", bg="#111", fg="#9f9", wrap="word")
         self.log.grid(row=4, column=0, columnspan=4, sticky="nsew", pady=6)
         self.columnconfigure(0, weight=1); self.rowconfigure(1, weight=1); self.rowconfigure(4, weight=2)
@@ -337,15 +345,24 @@ class BatchTab(ttk.Frame):
     def _go(self):
         import tempfile
         import json
-        items = self.list.get("1.0", "end").strip()
-        if not items:
-            messagebox.showwarning("缺少清单", "请输入清单（每行一个）"); return
         method = dict(BATCH_METHODS)[self.method.get()]
         mode = dict(BATCH_MODES)[self.mode.get()]
         tmp = Path(tempfile.gettempdir())
-        if method == "extract":                       # 抠原图：用 PDF 原图
+        common = ["--size", self.size.get(), "--precision", self.precision.get(),
+                  "--lang", dict(SCHEMES)[self.lang.get()]]
+        variants = ["--variants", "line,relief"] if self.variants.get() else \
+                   ["--style", dict(STYLES)[self.style.get()]]
+
+        if method == "local":                         # 本地文件夹：免 API
+            if not self.figures_dir or not Path(self.figures_dir).is_dir():
+                messagebox.showwarning("需要图片文件夹", "请先点「📁 PDF→图片(本地)」提取，并整理好文件夹。")
+                return
+            cmd = [PY, str(HERE / "batch.py"), "--images", self.figures_dir,
+                   "--mode", mode, *common, *variants]
+        elif method == "extract":                     # 抠原图：Gemini 定位 + 裁剪
+            items = self.list.get("1.0", "end").strip()
             if not self.pdf_path or not self.worklist:
-                messagebox.showwarning("需要 PDF", "“抠原图”需先点「📄 从 PDF 分析」选择 PDF。"); return
+                messagebox.showwarning("需要 PDF", "“抠原图”需先点「📄 从PDF分析」选择 PDF。"); return
             keep = {ln.split("|")[-1].strip() for ln in items.splitlines() if ln.strip()}
             sel = [it for it in self.worklist
                    if it.get("title", "").strip() in keep and it.get("box_2d")]
@@ -353,20 +370,45 @@ class BatchTab(ttk.Frame):
                 messagebox.showwarning("无可抠图项", "选中的项缺少图框（box_2d），无法抠原图。"); return
             wl = tmp / "tactile_pdf_worklist.json"
             wl.write_text(json.dumps(sel, ensure_ascii=False), encoding="utf-8")
-            cmd = [PY, str(HERE / "pdf_make.py"), self.pdf_path, str(wl),
-                   "--size", self.size.get(), "--precision", self.precision.get(),
-                   "--lang", dict(SCHEMES)[self.lang.get()]]
+            cmd = [PY, str(HERE / "pdf_make.py"), self.pdf_path, str(wl), *common]
             if mode == "picture":
                 cmd += ["--no-braille"]
         else:                                         # 重画：从描述生成
+            items = self.list.get("1.0", "end").strip()
+            if not items:
+                messagebox.showwarning("缺少清单", "请输入清单（每行一个）"); return
             tf = tmp / "tactile_batch_list.txt"
             tf.write_text(items, encoding="utf-8")
-            cmd = [PY, str(HERE / "batch.py"), str(tf), "--mode", mode,
-                   "--size", self.size.get(), "--precision", self.precision.get(),
-                   "--style", dict(STYLES)[self.style.get()],
-                   "--lang", dict(SCHEMES)[self.lang.get()]]
+            cmd = [PY, str(HERE / "batch.py"), str(tf), "--mode", mode, *common, *variants]
         self.btn.config(state="disabled", text="⏳ 批量生成中…")
         self.runner.start(cmd)
+
+    # ---- local PDF -> figures (PyMuPDF, no API)
+    def _extract_pdf(self):
+        p = filedialog.askopenfilename(filetypes=[("PDF", "*.pdf"), ("All", "*.*")])
+        if not p:
+            return
+        self.exbtn.config(state="disabled", text="⏳ 提取中…")
+        self._logln(f"📁 本地提取图片: {p}")
+        threading.Thread(target=self._extract, args=(p,), daemon=True).start()
+
+    def _extract(self, pdf):
+        r = subprocess.run([PY, str(HERE / "pdf_extract.py"), pdf],
+                           cwd=str(HERE), capture_output=True, text=True)
+        figdir = str(Path(pdf).with_name(Path(pdf).stem + "_figures"))
+        self.after(0, self._extracted, r, figdir)
+
+    def _extracted(self, r, figdir):
+        self.exbtn.config(state="normal", text="📁 PDF→图片(本地)")
+        self._logln((r.stdout or r.stderr).strip())
+        if r.returncode != 0 or not Path(figdir).is_dir():
+            messagebox.showerror("提取失败", "PDF 图片提取失败，请看日志"); return
+        self.figures_dir = figdir
+        self.method.set(BATCH_METHODS[2][0])          # switch 图片做法 -> 本地文件夹
+        open_in_finder(Path(figdir))
+        messagebox.showinfo("提取完成",
+                            f"已提取到：\n{figdir}\n\n请在 Finder 里整理（删掉不要的、把文件名改成中文标题），"
+                            "然后点「📦 批量生成」。\n（图片做法已自动切到“本地文件夹(免API)”。）")
 
     def _done(self, code):
         self.btn.config(state="normal", text="📦 批量生成")
