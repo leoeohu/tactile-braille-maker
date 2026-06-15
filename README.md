@@ -46,8 +46,14 @@ API keys (free): [Pollinations](https://pollinations.ai) for image generation,
 
 ## GUI
 
+Easiest: **double-click `run_gui.command`** (it launches with the correct Python).
+
+Or from a terminal:
+
 ```bash
-python gui.py            # run with the venv that has the deps installed
+~/gemini-tex/.venv/bin/python gui.py     # the venv that has the deps
+# (if you launch it with another Python, subprocesses still auto-find the venv;
+#  override with the TACTILE_PYTHON env var if your venv is elsewhere)
 ```
 
 A three-tab window:

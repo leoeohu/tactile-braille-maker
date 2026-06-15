@@ -20,11 +20,12 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 HERE = Path(__file__).resolve().parent
-PY = sys.executable                 # reuse the interpreter the GUI runs under
 OUT = HERE / "out"
 OUT.mkdir(exist_ok=True)
 
 sys.path.insert(0, str(HERE))
+from _env import python_with_deps    # noqa: E402
+PY = python_with_deps()             # interpreter that has the deps (not necessarily this one)
 import braille as B                  # for the live braille dot preview
 
 try:
