@@ -20,11 +20,10 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE / "out"
-OUT.mkdir(exist_ok=True)
-
 sys.path.insert(0, str(HERE))
-from _env import python_with_deps    # noqa: E402
+from env import python_with_deps, OUT_DIR   # noqa: E402
+OUT = OUT_DIR
+OUT.mkdir(exist_ok=True)
 PY = python_with_deps()             # interpreter that has the deps (not necessarily this one)
 import braille as B                  # for the live braille dot preview
 
@@ -149,7 +148,7 @@ class PictureTab(ttk.Frame):
         if not idea and not img:
             messagebox.showwarning("缺少输入", "请填写想法或选择图片"); return
         style = dict(STYLES)[self.style.get()]
-        cmd = [PY, str(HERE / "tactile.py"), "--keep",
+        cmd = [PY, str(HERE / "relief.py"), "--keep",
                "--size", self.size.get(), "--base", self.base.get(), "--relief", self.relief.get(),
                "--precision", self.precision.get(), "--style", style]
         if idea:

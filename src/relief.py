@@ -33,9 +33,7 @@ import urllib.error
 from datetime import datetime
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-BLENDER = os.environ.get(
-    "BLENDER", "/Applications/Blender.app/Contents/MacOS/Blender")
+from env import BLENDER, BLENDER_SCRIPT, OUT_DIR, load_env
 
 # Hard ceiling on grid subdivisions (longer side). res 2000 ~ 4M verts ~ 400MB STL;
 # beyond this files/Blender become impractical and it is already far finer than any printer.
@@ -58,22 +56,6 @@ RELIEF_STYLE = (
     "areas are dark, gentle tonal gradients describing 3D form and depth, rounded smooth volumes, "
     "no hard outlines, no text or lettering, plain dark background, subject centered filling the frame"
 )
-
-
-# --------------------------------------------------------------------------- env
-def load_env() -> dict:
-    cfg = {}
-    envp = HERE / ".env"
-    if envp.exists():
-        for line in envp.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                cfg[k.strip()] = v.strip().strip('"').strip("'")
-    for k in ("POLLINATIONS_TOKEN", "GEMINI_API_KEY"):
-        if os.environ.get(k):
-            cfg[k] = os.environ[k]
-    return cfg
 
 
 # ----------------------------------------------------------------- gemini (read)
@@ -328,7 +310,7 @@ def run_blender(heightmap: Path, out_stl: Path, *, size_x: float, size_y: float,
                 base: float, relief: float, res: int) -> None:
     if not Path(BLENDER).exists():
         sys.exit(f"Blender not found at {BLENDER!r}. Set $BLENDER to its path.")
-    cmd = [BLENDER, "-b", "--python", str(HERE / "blender_displace.py"), "--",
+    cmd = [BLENDER, "-b", "--python", str(BLENDER_SCRIPT), "--",
            str(heightmap), str(out_stl),
            str(size_x), str(size_y), str(base), str(relief), str(res)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -426,7 +408,7 @@ def main() -> None:
     slug_src = (args.idea or Path(args.image).stem or "tactile")
     slug = "".join(c if c.isalnum() else "_" for c in slug_src.lower())[:32].strip("_") or "tactile"
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_stl = Path(args.out).expanduser() if args.out else HERE / "out" / f"{slug}_{stamp}.stl"
+    out_stl = Path(args.out).expanduser() if args.out else OUT_DIR / f"{slug}_{stamp}.stl"
     out_stl.parent.mkdir(parents=True, exist_ok=True)
     work = out_stl.parent if args.keep else Path(
         os.environ.get("TMPDIR", "/tmp"))

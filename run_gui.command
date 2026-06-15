@@ -3,4 +3,4 @@
 cd "$(dirname "$0")"
 PY="$HOME/gemini-tex/.venv/bin/python"
 [ -x "$PY" ] || PY="$(command -v python3)"
-exec "$PY" gui.py
+exec "$PY" src/gui.py

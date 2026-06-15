@@ -27,7 +27,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from _env import python_with_deps  # noqa: E402
+from env import python_with_deps, OUT_DIR  # noqa: E402
 PY = python_with_deps()
 
 
@@ -78,7 +78,7 @@ def main():
         ap.error("provide a list file or --images <folder>")
     styles = [s.strip() for s in args.variants.split(",") if s.strip()] or [args.style]
     outdir = Path(args.outdir).expanduser() if args.outdir else \
-        HERE / "out" / ("batch_" + datetime.now().strftime("%Y%m%d_%H%M%S"))
+        OUT_DIR / ("batch_" + datetime.now().strftime("%Y%m%d_%H%M%S"))
     outdir.mkdir(parents=True, exist_ok=True)
     ok = fail = 0
 
@@ -88,7 +88,7 @@ def main():
         for st in styles:
             suf = f"_{st}" if len(styles) > 1 else ""
             out = outdir / f"{i:02d}_{slug(name)}{suf}.stl"
-            cmd = [PY, str(HERE / "tactile.py"), *src_args, "--out", str(out),
+            cmd = [PY, str(HERE / "relief.py"), *src_args, "--out", str(out),
                    "--size", args.size, "--base", args.base, "--relief", args.relief,
                    "--precision", args.precision, "--style", st]
             if args.braille_text:

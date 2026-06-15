@@ -21,8 +21,8 @@ idea / image ──► bold B&W picture ──► height map ──► embossed 
   watertight, **flat-bottomed** solid (relief on top, flat base underneath → prints
   flat-side-down, no supports).
 
-It also includes **`braille.py`** — a standard-spaced braille / 盲文 / 点字 label
-generator (English + 中文国家通用盲文) — and **`gui.py`**, a simple graphical interface.
+It also includes **`src/braille.py`** — a standard-spaced braille / 盲文 / 点字 label
+generator (English + 中文国家通用盲文) — and **`src/gui.py`**, a simple graphical interface.
 
 ## Install
 
@@ -44,6 +44,30 @@ External tools (not pip):
 API keys (free): [Pollinations](https://pollinations.ai) for image generation,
 [Google AI Studio](https://aistudio.google.com/apikey) for Gemini image reading.
 
+## Project structure
+
+```
+tactile-braille-maker/
+├── run_gui.command          # double-click launcher (macOS) → src/gui.py
+├── requirements.txt
+├── .env.example             # copy to .env and add your keys (.env is git-ignored)
+├── docs/                    # preview images for this README
+├── out/                     # generated STLs (git-ignored)
+└── src/
+    ├── env.py               # shared: paths, .env loading, interpreter resolver
+    ├── relief.py            # idea/image → B&W → Blender displace → relief STL
+    ├── braille.py           # text → liblouis → standard-spaced braille STL
+    ├── blender_displace.py  # headless Blender step (run by Blender, not python)
+    ├── batch.py             # batch over a text list, or a folder of images
+    ├── gui.py               # tkinter 3-tab GUI (relief / braille / batch)
+    ├── pdf_analyze.py       # Gemini: PDF → worklist (titles, pages, labels, notes)
+    ├── pdf_extract.py       # PyMuPDF: PDF → figure PNGs (local, no API)
+    └── pdf_make.py          # crop PDF figures → faithful relief + in-place braille
+```
+
+Every script is runnable on its own (`python src/<name>.py -h`); they call each other by
+path and share `src/env.py`. The GUI just orchestrates them.
+
 ## GUI
 
 Easiest: **double-click `run_gui.command`** (it launches with the correct Python).
@@ -51,7 +75,7 @@ Easiest: **double-click `run_gui.command`** (it launches with the correct Python
 Or from a terminal:
 
 ```bash
-~/gemini-tex/.venv/bin/python gui.py     # the venv that has the deps
+~/gemini-tex/.venv/bin/python src/gui.py     # the venv that has the deps
 # (if you launch it with another Python, subprocesses still auto-find the venv;
 #  override with the TACTILE_PYTHON env var if your venv is elsewhere)
 ```
@@ -67,7 +91,7 @@ A three-tab window:
 ## Batch (批量) — for educators making many items
 
 ```bash
-python batch.py words.txt --mode both --size 120 --lang auto      # or --mode picture / braille
+python src/batch.py words.txt --mode both --size 120 --lang auto      # or --mode picture / braille
 ```
 
 `words.txt` is one item per line; an optional `|` separates the picture idea from the braille
@@ -87,14 +111,14 @@ Point it at a PDF (e.g. a textbook chapter or a curated figure list) and Gemini 
 every image/diagram to make, as a ready-to-edit worklist:
 
 ```bash
-python pdf_analyze.py 选图.pdf                 # -> 选图.worklist.txt (+ .json with pages/labels/notes)
-python batch.py 选图.worklist.txt --mode both  # then generate them
+python src/pdf_analyze.py 选图.pdf                 # -> 选图.worklist.txt (+ .json with pages/labels/notes)
+python src/batch.py 选图.worklist.txt --mode both  # then generate them
 ```
 
 In the GUI **批量** tab, click **📄 从 PDF 分析**, pick the PDF, review/trim the auto-filled
 list, then **📦 批量生成**. Each line is `description | 中文标题`.
 
-**Two ways to make each picture** (图片做法 selector / `pdf_make.py`):
+**Two ways to make each picture** (图片做法 selector / `src/pdf_make.py`):
 * **重画 (redraw)** — Pollination draws a clean tactile diagram from the description; the title
   becomes the braille label. Best for simple shapes.
 * **抠原图 (extract)** — render the PDF page, crop the actual figure (`box_2d` from the analysis),
@@ -102,8 +126,8 @@ list, then **📦 批量生成**. Each line is `description | 中文标题`.
   textbook diagram. CLI:
 
 ```bash
-python pdf_make.py 选图.pdf 选图.worklist.json --size 160        # extract + in-place braille
-python pdf_make.py 选图.pdf 选图.worklist.json --no-braille       # figure only
+python src/pdf_make.py 选图.pdf 选图.worklist.json --size 160        # extract + in-place braille
+python src/pdf_make.py 选图.pdf 选图.worklist.json --no-braille       # figure only
 ```
 
 > **Gemini quota:** the free tier allows ~20 requests/day. PDF analysis is 1 request, but the
@@ -117,18 +141,18 @@ Extract the figures straight out of the PDF with PyMuPDF (no API), curate the fo
 batch them — make as many variants as you like:
 
 ```bash
-python pdf_extract.py 选图.pdf                       # -> 选图_figures/  (one PNG per figure)
+python src/pdf_extract.py 选图.pdf                       # -> 选图_figures/  (one PNG per figure)
 # delete unwanted files, rename them to 中文标题 (the filename becomes the braille label)
 # one plate per figure, with the figure's own text turned to braille in place:
-python batch.py --images 选图_figures --mode picture --braille-text --text-engine tesseract
-python batch.py --images 选图_figures --variants line,relief   # or: 2 style versions each
+python src/batch.py --images 选图_figures --mode picture --braille-text --text-engine tesseract
+python src/batch.py --images 选图_figures --variants line,relief   # or: 2 style versions each
 ```
 
 In the GUI **批量** tab: **📁 PDF→图片(本地)** extracts locally and opens the folder; after you
 tidy it, click **📦 批量生成** (图片做法 = 本地文件夹). By default each item makes **one plate**
 with **把图中所有文字转成盲文（就地）** ticked, so the figure's labels are embossed as braille on
 the same plate. Pick the **盲文OCR** engine: *云端 Gemini* (accurate, uses quota) or *本地 Tesseract*
-(offline, weaker on small/CJK labels). Braille *labels* (`braille.py`) are always local.
+(offline, weaker on small/CJK labels). Braille *labels* (`src/braille.py`) are always local.
 
 ## Usage (command line)
 
@@ -137,18 +161,18 @@ PY=~/gemini-tex/.venv/bin/python      # has pillow / numpy / google-genai
 cd ~/Desktop/盲人教案/tactile
 
 # from an idea
-$PY tactile.py --idea "a butterfly"
-$PY tactile.py --idea "the water cycle: sun, cloud, rain arrows, ground"
+$PY src/relief.py --idea "a butterfly"
+$PY src/relief.py --idea "the water cycle: sun, cloud, rain arrows, ground"
 
 # from a reference image (Gemini describes it, Pollination redraws it tactile)
-$PY tactile.py --image ~/photo.jpg
-$PY tactile.py --idea "make it simpler" --image ~/photo.jpg
+$PY src/relief.py --image ~/photo.jpg
+$PY src/relief.py --idea "make it simpler" --image ~/photo.jpg
 
 # use an image you already cleaned to black-and-white, skip generation
-$PY tactile.py --image ~/clean_bw.png --use-image-directly
+$PY src/relief.py --image ~/clean_bw.png --use-image-directly
 
 # control the physical plate
-$PY tactile.py --idea "a maple leaf" --size 150 --base 2.5 --relief 1.8 --out ~/leaf.stl
+$PY src/relief.py --idea "a maple leaf" --size 150 --base 2.5 --relief 1.8 --out ~/leaf.stl
 ```
 
 STLs land in `out/` by default. `--keep` saves the generated picture + height map too.
@@ -156,7 +180,7 @@ STLs land in `out/` by default. `--keep` saves the generated picture + height ma
 The plate **keeps the image's aspect ratio** — `--size` is the *longer* side and the
 shorter side follows the picture, so the relief is never squished.
 
-## Key options (`tactile.py -h` for all)
+## Key options (`src/relief.py -h` for all)
 
 | flag | default | meaning |
 |------|---------|---------|
@@ -190,7 +214,7 @@ override. Blender path defaults to the macOS app bundle — override with `$BLEN
 
 ---
 
-# Braille labels (`braille.py`)
+# Braille labels (`src/braille.py`)
 
 Standard-spaced raised **braille / 盲文 / 点字** dots → printable STL. No AI: text is
 translated by **liblouis** (industry-standard tables) and the dots are built directly at
@@ -206,15 +230,15 @@ text ──► liblouis ──► Unicode braille cells ──► dome dots on a
 PY=~/gemini-tex/.venv/bin/python
 cd ~/Desktop/盲人教案/tactile
 
-$PY braille.py "Cat"                    # English Grade 1
-$PY braille.py "你好世界"                 # 中文 国家通用盲文 (auto-detected)
-$PY braille.py "猫 cat"                   # mixed Chinese + English, one pass
-$PY braille.py --lang en-g2 "the cat"    # English Grade 2 (contracted)
-$PY braille.py --lang zh-current "你好"   # 现行盲文 instead of 国家通用
-$PY braille.py "EXIT\n出口"               # two rows (\n)
-$PY braille.py --braille "⠉⠁⠞"           # supply Unicode braille directly
-$PY braille.py --dots "14 1 2345"        # supply explicit dot numbers per cell
-$PY braille.py "Exit" --size 80 --base 2.5   # centre on a fixed 80mm-wide plate
+$PY src/braille.py "Cat"                    # English Grade 1
+$PY src/braille.py "你好世界"                 # 中文 国家通用盲文 (auto-detected)
+$PY src/braille.py "猫 cat"                   # mixed Chinese + English, one pass
+$PY src/braille.py --lang en-g2 "the cat"    # English Grade 2 (contracted)
+$PY src/braille.py --lang zh-current "你好"   # 现行盲文 instead of 国家通用
+$PY src/braille.py "EXIT\n出口"               # two rows (\n)
+$PY src/braille.py --braille "⠉⠁⠞"           # supply Unicode braille directly
+$PY src/braille.py --dots "14 1 2345"        # supply explicit dot numbers per cell
+$PY src/braille.py "Exit" --size 80 --base 2.5   # centre on a fixed 80mm-wide plate
 ```
 
 ## Languages (`--lang`, default `auto`)
@@ -243,6 +267,6 @@ Any other value is passed straight to liblouis as a table name.
 | `--margin` | 6.0 mm | edge-to-nearest-dot margin |
 | `--size` / `--height` | auto | fix plate W/H (mm); text is centred |
 
-Use `--size`/`--height` to match a picture plate from `tactile.py`, then the label can be
+Use `--size`/`--height` to match a picture plate from `src/relief.py`, then the label can be
 printed beside or below the relief image.
 

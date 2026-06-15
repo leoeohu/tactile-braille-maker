@@ -22,7 +22,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-import tactile  # noqa: E402  (for load_env)
+import env  # noqa: E402  (for load_env)
 
 PROMPT = (
     "This PDF curates images/diagrams to turn into tactile (raised-relief) 3D prints for "
@@ -95,7 +95,7 @@ def main():
     ap.add_argument("--gemini-model", default="gemini-2.5-flash")
     args = ap.parse_args()
 
-    cfg = tactile.load_env()
+    cfg = env.load_env()
     if not cfg.get("GEMINI_API_KEY"):
         sys.exit("GEMINI_API_KEY missing (needed to read the PDF).")
 

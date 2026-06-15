@@ -33,6 +33,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from env import OUT_DIR
+
 HERE = Path(__file__).resolve().parent
 
 
@@ -277,7 +279,7 @@ def main():
     # ---- output
     slug_src = (args.text or args.braille or args.dots or "label")
     slug = "".join(ch if ch.isalnum() else "_" for ch in slug_src.lower())[:28].strip("_") or "label"
-    out = Path(args.out).expanduser() if args.out else HERE / "out" / f"braille_{slug}.stl"
+    out = Path(args.out).expanduser() if args.out else OUT_DIR / f"braille_{slug}.stl"
     out.parent.mkdir(parents=True, exist_ok=True)
     write_stl(out, tris)
 

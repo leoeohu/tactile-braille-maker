@@ -21,7 +21,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from _env import python_with_deps  # noqa: E402
+from env import python_with_deps, OUT_DIR  # noqa: E402
 PY = python_with_deps()
 
 
@@ -54,7 +54,7 @@ def main():
     items = json.loads(Path(args.worklist).expanduser().read_text(encoding="utf-8"))
     doc = fitz.open(str(Path(args.pdf).expanduser()))
     outdir = Path(args.outdir).expanduser() if args.outdir else \
-        HERE / "out" / ("pdf_" + datetime.now().strftime("%Y%m%d_%H%M%S"))
+        OUT_DIR / ("pdf_" + datetime.now().strftime("%Y%m%d_%H%M%S"))
     crops = outdir / "_crops"
     crops.mkdir(parents=True, exist_ok=True)
 
@@ -86,7 +86,7 @@ def main():
         img.crop((x0, y0, x1, y1)).save(crop_path)
 
         out = outdir / f"{i:02d}_{slug(title)}.stl"
-        cmd = [PY, str(HERE / "tactile.py"), "--image", str(crop_path), "--use-image-directly",
+        cmd = [PY, str(HERE / "relief.py"), "--image", str(crop_path), "--use-image-directly",
                "--out", str(out), "--size", args.size, "--base", args.base,
                "--relief", args.relief, "--precision", args.precision]
         if not args.no_braille:
