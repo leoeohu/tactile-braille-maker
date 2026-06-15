@@ -119,13 +119,16 @@ batch them — make as many variants as you like:
 ```bash
 python pdf_extract.py 选图.pdf                       # -> 选图_figures/  (one PNG per figure)
 # delete unwanted files, rename them to 中文标题 (the filename becomes the braille label)
-python batch.py --images 选图_figures --variants line,relief   # 2 versions each, no API
+# one plate per figure, with the figure's own text turned to braille in place:
+python batch.py --images 选图_figures --mode picture --braille-text --text-engine tesseract
+python batch.py --images 选图_figures --variants line,relief   # or: 2 style versions each
 ```
 
 In the GUI **批量** tab: **📁 PDF→图片(本地)** extracts locally and opens the folder; after you
-tidy it, tick **多版本** if wanted and click **📦 批量生成** (图片做法 = 本地文件夹). Braille
-*labels* (`braille.py`) are always local; only Gemini in-place OCR needs the cloud (Tesseract is
-available offline via `--text-engine tesseract` but is far less accurate on small/CJK labels).
+tidy it, click **📦 批量生成** (图片做法 = 本地文件夹). By default each item makes **one plate**
+with **把图中所有文字转成盲文（就地）** ticked, so the figure's labels are embossed as braille on
+the same plate. Pick the **盲文OCR** engine: *云端 Gemini* (accurate, uses quota) or *本地 Tesseract*
+(offline, weaker on small/CJK labels). Braille *labels* (`braille.py`) are always local.
 
 ## Usage (command line)
 

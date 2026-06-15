@@ -288,13 +288,17 @@ BATCH_MODES = [("两者都要 (图+盲文)", "both"), ("仅图片浮雕", "pictu
 BATCH_METHODS = [("重画 (描述→AI)", "redraw"),
                  ("抠原图 (Gemini定位)", "extract"),
                  ("本地图片文件夹 (免API)", "local")]
+# OCR engine for "把图中文字转成盲文"
+OCR_ENGINES = [("云端 Gemini (准)", "gemini"), ("本地 Tesseract (免API, 较弱)", "tesseract")]
 
 
 class BatchTab(ttk.Frame):
     def __init__(self, master):
         super().__init__(master, padding=12)
-        self.mode = tk.StringVar(value=BATCH_MODES[0][0])
+        self.mode = tk.StringVar(value=BATCH_MODES[1][0])     # default 仅图片浮雕 = one plate/item
         self.method = tk.StringVar(value=BATCH_METHODS[0][0])
+        self.braille_in = tk.BooleanVar(value=True)           # braille the image's own text in place
+        self.ocr = tk.StringVar(value=OCR_ENGINES[0][0])
         self.size = tk.StringVar(value="120")
         self.precision = tk.StringVar(value="0.1")
         self.style = tk.StringVar(value=STYLES[0][0])
@@ -327,8 +331,13 @@ class BatchTab(ttk.Frame):
         ttk.Label(opt, text="图片做法").grid(row=2, column=2, pady=(6, 0))
         ttk.Combobox(opt, textvariable=self.method, state="readonly", width=18,
                      values=[m[0] for m in BATCH_METHODS]).grid(row=2, column=3, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(opt, text="把图中所有文字转成盲文（就地，单板）", variable=self.braille_in).grid(
+            row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Label(opt, text="盲文OCR").grid(row=3, column=2, pady=(6, 0))
+        ttk.Combobox(opt, textvariable=self.ocr, state="readonly", width=20,
+                     values=[e[0] for e in OCR_ENGINES]).grid(row=3, column=3, sticky="w", pady=(6, 0))
         ttk.Checkbutton(opt, text="多版本（线条+灰度各出一个）", variable=self.variants).grid(
-            row=3, column=0, columnspan=4, sticky="w", pady=(6, 0))
+            row=4, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
         self.pdfbtn = ttk.Button(self, text="📄 从PDF分析(Gemini)", command=self._pick_pdf)
         self.pdfbtn.grid(row=3, column=0, sticky="w", pady=8)
@@ -353,13 +362,15 @@ class BatchTab(ttk.Frame):
                   "--lang", dict(SCHEMES)[self.lang.get()]]
         variants = ["--variants", "line,relief"] if self.variants.get() else \
                    ["--style", dict(STYLES)[self.style.get()]]
+        engine = dict(OCR_ENGINES)[self.ocr.get()]
+        braille = ["--braille-text", "--text-engine", engine] if self.braille_in.get() else []
 
         if method == "local":                         # 本地文件夹：免 API
             if not self.figures_dir or not Path(self.figures_dir).is_dir():
                 messagebox.showwarning("需要图片文件夹", "请先点「📁 PDF→图片(本地)」提取，并整理好文件夹。")
                 return
             cmd = [PY, str(HERE / "batch.py"), "--images", self.figures_dir,
-                   "--mode", mode, *common, *variants]
+                   "--mode", mode, *common, *variants, *braille]
         elif method == "extract":                     # 抠原图：Gemini 定位 + 裁剪
             items = self.list.get("1.0", "end").strip()
             if not self.pdf_path or not self.worklist:
@@ -371,8 +382,9 @@ class BatchTab(ttk.Frame):
                 messagebox.showwarning("无可抠图项", "选中的项缺少图框（box_2d），无法抠原图。"); return
             wl = tmp / "tactile_pdf_worklist.json"
             wl.write_text(json.dumps(sel, ensure_ascii=False), encoding="utf-8")
-            cmd = [PY, str(HERE / "pdf_make.py"), self.pdf_path, str(wl), *common]
-            if mode == "picture":
+            cmd = [PY, str(HERE / "pdf_make.py"), self.pdf_path, str(wl), *common,
+                   "--text-engine", engine]
+            if not self.braille_in.get():
                 cmd += ["--no-braille"]
         else:                                         # 重画：从描述生成
             items = self.list.get("1.0", "end").strip()
@@ -380,7 +392,7 @@ class BatchTab(ttk.Frame):
                 messagebox.showwarning("缺少清单", "请输入清单（每行一个）"); return
             tf = tmp / "tactile_batch_list.txt"
             tf.write_text(items, encoding="utf-8")
-            cmd = [PY, str(HERE / "batch.py"), str(tf), "--mode", mode, *common, *variants]
+            cmd = [PY, str(HERE / "batch.py"), str(tf), "--mode", mode, *common, *variants, *braille]
         self.btn.config(state="disabled", text="⏳ 批量生成中…")
         self.runner.start(cmd)
 
