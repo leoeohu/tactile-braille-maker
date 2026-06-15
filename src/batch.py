@@ -64,6 +64,8 @@ def main():
     ap.add_argument("--relief", default="1.5")
     ap.add_argument("--precision", default="0.1")
     ap.add_argument("--style", choices=["line", "relief"], default="line")
+    ap.add_argument("--engrave", action="store_true",
+                    help="carve the pattern into the plate (凹) instead of raising it (凸)")
     ap.add_argument("--variants", default="",
                     help="comma styles to make per item, e.g. 'line,relief' -> one STL each")
     # braille options
@@ -91,6 +93,8 @@ def main():
             cmd = [PY, str(HERE / "relief.py"), *src_args, "--out", str(out),
                    "--size", args.size, "--base", args.base, "--relief", args.relief,
                    "--precision", args.precision, "--style", st]
+            if args.engrave:
+                cmd += ["--engrave"]
             if args.braille_text:
                 cmd += ["--braille-text", "--braille-lang", args.lang,
                         "--text-engine", args.text_engine]

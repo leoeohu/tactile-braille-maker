@@ -1,8 +1,8 @@
 """Headless Blender step: heightmap PNG -> displaced, flat-bottomed solid plate -> STL.
 
-Run by tactile.py as:
+Run by relief.py as:
     blender -b --python blender_displace.py -- <heightmap.png> <out.stl> \
-            <size_x_mm> <size_y_mm> <base_mm> <relief_mm> <res>
+            <size_x_mm> <size_y_mm> <mid_level> <strength_mm> <bottom_z_mm> <res>
 
 Conventions
 -----------
@@ -10,11 +10,13 @@ Conventions
 * Plate is size_x x size_y (its aspect matches the heightmap so the relief is NOT
   squished). `res` is the subdivision count along the LONGER side; the shorter side
   gets a proportional count so vertex density (precision) is uniform.
-* Heightmap: bright = raised. Black (0) -> displacement 0 (stays at z=0 = base top).
-  White (1) -> +relief_mm. The image MUST have a black (0) border so the plate
-  perimeter sits flat at z=0; tactile.py guarantees this with a margin.
-* Result: relief on top (z in [0, relief]), flat bottom at z = -base, vertical
-  side walls -> watertight, prints flat-side-down with no supports.
+* z = (heightmap_value - mid_level) * strength. relief.py picks mid_level/strength so
+  the flat plate surface sits at z=0:
+    - raise   : mid=0,            features rise to +relief, bottom at -base.
+    - engrave : mid=bg_gray,      features carve to -relief (braille still rises above 0),
+                bottom at -(base+relief).
+  The heightmap border equals the background value, so the perimeter sits at z=0.
+* Flat bottom at bottom_z, vertical side walls -> watertight, prints flat-side-down.
 """
 import sys
 import bpy
@@ -22,11 +24,12 @@ import bmesh
 
 argv = sys.argv[sys.argv.index("--") + 1:]
 heightmap, out_stl = argv[0], argv[1]
-size_x = float(argv[2])   # plate width, mm
-size_y = float(argv[3])   # plate height, mm
-base = float(argv[4])     # solid base thickness below the relief, mm
-relief = float(argv[5])   # max relief height above the base, mm
-res = int(argv[6])        # subdivisions along the longer side
+size_x = float(argv[2])    # plate width, mm
+size_y = float(argv[3])    # plate height, mm
+mid_level = float(argv[4]) # displace mid-level (heightmap value that maps to z=0)
+strength = float(argv[5])  # displace strength (mm per full heightmap unit)
+bottom_z = float(argv[6])  # flat bottom plane (mm); must sit below the deepest feature
+res = int(argv[7])         # subdivisions along the longer side
 
 # proportional subdivisions -> uniform vertex density on a rectangular plate
 longer = max(size_x, size_y)
@@ -58,8 +61,8 @@ mod = obj.modifiers.new("displace", 'DISPLACE')
 mod.texture = tex
 mod.texture_coords = 'UV'   # grid ships a 0..1 UV map -> image maps once across plate
 mod.direction = 'Z'
-mod.mid_level = 0.0         # value 0 -> 0 displacement (one-directional, upward only)
-mod.strength = relief
+mod.mid_level = mid_level   # heightmap value that maps to z=0 (the flat plate surface)
+mod.strength = strength     # raise: +relief at value 1; engrave: features carved below 0
 bpy.ops.object.modifier_apply(modifier=mod.name)
 
 # --- turn the displaced sheet into a watertight, flat-bottomed solid ------
@@ -71,7 +74,7 @@ boundary = [e for e in bm.edges if e.is_boundary]            # outer rectangle
 ret = bmesh.ops.extrude_edge_only(bm, edges=boundary)
 geom = ret['geom']
 for v in (g for g in geom if isinstance(g, bmesh.types.BMVert)):
-    v.co.z = -base                                          # flatten extruded rim
+    v.co.z = bottom_z                                       # flatten extruded rim
 bottom_edges = [g for g in geom
                 if isinstance(g, bmesh.types.BMEdge) and g.is_boundary]
 bmesh.ops.contextual_create(bm, geom=bottom_edges)          # fill bottom n-gon

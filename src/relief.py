@@ -244,9 +244,12 @@ def detect_text_tesseract(image_path: str, langs: str = "chi_sim+eng") -> list:
 def composite_braille(height_path: Path, detections: list, *,
                       plate_x: float, plate_y: float, margin: float, relief: float,
                       lang: str, dot_height: float = 0.6, dot_diam: float = 1.5,
-                      dot_spacing: float = 2.5, cell_pitch: float = 6.0) -> int:
+                      dot_spacing: float = 2.5, cell_pitch: float = 6.0,
+                      bg_value: float = 0.0, dot_value: float = None) -> int:
     """Erase printed text from the height map and stamp standard-spaced braille dots
     at those positions. Boxes are normalized 0..1 over the original image content.
+    `bg_value`/`dot_value` are the heightmap levels of the surface and the dot apex
+    (raise: 0 .. dot/relief; engrave: bg_gray .. 1, so dots still rise above the surface).
     Returns how many labels were placed."""
     import numpy as np
     from PIL import Image
@@ -261,13 +264,15 @@ def composite_braille(height_path: Path, detections: list, *,
     ds = dot_spacing * ppm
     cp = cell_pitch * ppm
     dot_r = max(1.0, (dot_diam / 2) * ppm)
-    peak = min(1.0, dot_height / relief)            # so displaced dot height == dot_height
+    if dot_value is None:
+        dot_value = min(1.0, dot_height / relief)   # raise default: displaced height == dot_height
 
     arr = np.asarray(hm, dtype=np.float32) / 255.0
     R = int(np.ceil(dot_r))
     yy, xx = np.mgrid[-R:R + 1, -R:R + 1]
     rr = np.sqrt(xx ** 2 + yy ** 2) / dot_r
-    stamp = peak * np.sqrt(np.clip(1 - rr ** 2, 0.0, 1.0))   # spherical-cap dome
+    prof = np.sqrt(np.clip(1 - rr ** 2, 0.0, 1.0))           # spherical-cap profile 0..1
+    stamp = bg_value + (dot_value - bg_value) * prof         # rises from surface to apex
 
     def paste_max(cx, cy):
         xi, yi = int(round(cx)) - R, int(round(cy)) - R
@@ -286,7 +291,7 @@ def composite_braille(height_path: Path, detections: list, *,
         bx1, by1 = mpx + x1 * content_w, mpx + y1 * content_h
         pad = int(0.35 * ds)
         arr[max(0, int(by0 - pad)):min(HH, int(by1 + pad)),
-            max(0, int(bx0 - pad)):min(HW, int(bx1 + pad))] = 0.0   # erase printed text
+            max(0, int(bx0 - pad)):min(HW, int(bx1 + pad))] = bg_value   # erase printed text
         lng = B.resolve_lang(det["text"], lang)
         lines = B.translate(det["text"], lng)
         cells = B.cells_from_braille(lines[0]) if lines else []
@@ -305,14 +310,24 @@ def composite_braille(height_path: Path, detections: list, *,
     return placed
 
 
+def engrave_heightmap(height_path: Path, bg: float) -> None:
+    """Turn a raise-convention height map (features bright) into an engrave one:
+    features -> 0 (carved deepest), background/border -> bg gray (the top surface)."""
+    import numpy as np
+    from PIL import Image
+    arr = np.asarray(Image.open(height_path).convert("L"), dtype=np.float32) / 255.0
+    arr = bg * (1.0 - arr)                       # feature(1)->0, bg(0)->bg, grayscale scales
+    Image.fromarray((np.clip(arr, 0, 1) * 255).astype("uint8"), "L").save(height_path)
+
+
 # -------------------------------------------------------------- blender (solid)
 def run_blender(heightmap: Path, out_stl: Path, *, size_x: float, size_y: float,
-                base: float, relief: float, res: int) -> None:
+                mid_level: float, strength: float, bottom_z: float, res: int) -> None:
     if not Path(BLENDER).exists():
         sys.exit(f"Blender not found at {BLENDER!r}. Set $BLENDER to its path.")
     cmd = [BLENDER, "-b", "--python", str(BLENDER_SCRIPT), "--",
-           str(heightmap), str(out_stl),
-           str(size_x), str(size_y), str(base), str(relief), str(res)]
+           str(heightmap), str(out_stl), str(size_x), str(size_y),
+           str(mid_level), str(strength), str(bottom_z), str(res)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     for line in proc.stdout.splitlines():
         if line.startswith("[blender]"):
@@ -338,7 +353,10 @@ def main() -> None:
     ap.add_argument("--size", type=float, default=120.0,
                     help="LONGER plate side (mm); shorter side follows the image aspect")
     ap.add_argument("--base", type=float, default=3.0, help="solid base thickness (mm)")
-    ap.add_argument("--relief", type=float, default=1.5, help="max relief height (mm)")
+    ap.add_argument("--relief", type=float, default=1.5, help="relief height/depth (mm)")
+    ap.add_argument("--engrave", action="store_true",
+                    help="carve the pattern INTO the plate (凹) instead of raising it (凸); "
+                         "any braille labels still rise above the surface so they stay readable")
     ap.add_argument("--res", type=int, default=600,
                     help="precision: subdivisions along the longer side (higher = finer/slower)")
     ap.add_argument("--precision", type=float, default=None,
@@ -461,6 +479,17 @@ def main() -> None:
         print(f"      heightmap upscaled {longer}->{res}px to match precision")
     print(f"      -> {height_png}")
 
+    # ---- displacement mode: raise (凸) vs engrave (凹). Braille always rises above surface.
+    dot_h = args.braille_dot_height
+    if args.engrave:
+        bg_gray = args.relief / (args.relief + dot_h)        # plate top; features carve to -relief
+        mid_level, strength, bottom_z = bg_gray, args.relief + dot_h, -(args.base + args.relief)
+        engrave_heightmap(height_png, bg_gray)               # features->0 (deepest), bg/border->gray
+        braille_bg, braille_top = bg_gray, 1.0               # dots rise from surface to +dot_h
+    else:
+        mid_level, strength, bottom_z = 0.0, args.relief, -args.base
+        braille_bg, braille_top = 0.0, min(1.0, dot_h / args.relief)
+
     # ---- 2.5 detect text -> emboss braille (optional)
     if args.braille_text:
         engine = args.text_engine
@@ -481,22 +510,25 @@ def main() -> None:
             n = composite_braille(height_png, dets,
                                   plate_x=plate_x, plate_y=plate_y, margin=args.margin,
                                   relief=args.relief, lang=args.braille_lang,
-                                  dot_height=args.braille_dot_height)
+                                  dot_height=args.braille_dot_height,
+                                  bg_value=braille_bg, dot_value=braille_top)
             print(f"   已嵌入 {n} 处盲文（原文字已抹平）")
         else:
             print("   未检测到文字，跳过盲文")
 
     # ---- 3. displace + solidify + export in Blender
+    mode_label = "engrave 凹" if args.engrave else "raise 凸"
     print(f"[4/4] Blender displace -> STL "
-          f"(plate={plate_x}×{plate_y}mm base={args.base}mm relief={args.relief}mm res={res}, "
-          f"≈{args.size/res:.3f}mm/格) ...")
+          f"(plate={plate_x}×{plate_y}mm base={args.base}mm relief={args.relief}mm {mode_label} "
+          f"res={res}, ≈{args.size/res:.3f}mm/格) ...")
     run_blender(height_png, out_stl, size_x=plate_x, size_y=plate_y,
-                base=args.base, relief=args.relief, res=res)
+                mid_level=mid_level, strength=strength, bottom_z=bottom_z, res=res)
 
     mb = out_stl.stat().st_size / 1e6
+    verb = "carved into" if args.engrave else "raised on"
     print(f"\n✅ {out_stl}  ({mb:.1f} MB)")
-    print(f"   plate {plate_x}×{plate_y} mm, base {args.base} mm, "
-          f"relief up to {args.relief} mm — print flat side down, no supports.")
+    print(f"   plate {plate_x}×{plate_y} mm, base {args.base} mm, pattern {verb} the plate "
+          f"({args.relief} mm) — print flat side down, no supports.")
     if args.keep and not args.use_image_directly:
         print(f"   intermediates: {gen_png.name}, {height_png.name}")
 

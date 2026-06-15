@@ -37,8 +37,10 @@ def open_in_finder(path: Path):
     subprocess.run(["open", "-R", str(path)] if path.exists() else ["open", str(OUT)])
 
 
-# relief style: label -> tactile.py --style value
+# relief style: label -> relief.py --style value
 STYLES = [("线条 (黑白)", "line"), ("灰度浮雕 (深浅不一)", "relief")]
+# pattern direction: raised vs carved-in
+DIRECTIONS = [("突出来 (凸)", "raise"), ("凹进去 (凹)", "engrave")]
 
 
 class Runner:
@@ -91,6 +93,7 @@ class PictureTab(ttk.Frame):
         self.relief = tk.StringVar(value="1.5")
         self.precision = tk.StringVar(value="0.1")     # mm per vertex
         self.style = tk.StringVar(value=STYLES[0][0])
+        self.direction = tk.StringVar(value=DIRECTIONS[0][0])
         self.braille_text = tk.BooleanVar(value=False)
         self._preview_img = None
 
@@ -116,11 +119,13 @@ class PictureTab(ttk.Frame):
         ttk.Label(box, text="mm/格 (越小越细; 打印机极限≈0.1)", foreground="#777").grid(
             row=1, column=2, columnspan=4, sticky="w", padx=(2, 0), pady=(8, 0))
         ttk.Label(box, text="风格").grid(row=2, column=0, pady=(8, 0), sticky="w")
-        ttk.Combobox(box, textvariable=self.style, state="readonly", width=16,
+        ttk.Combobox(box, textvariable=self.style, state="readonly", width=14,
                      values=[s[0] for s in STYLES]).grid(
-            row=2, column=1, columnspan=4, sticky="w", pady=(8, 0))
-        ttk.Label(box, text="（短边按图片比例自动）", foreground="#777").grid(
-            row=2, column=5, columnspan=4, sticky="w", padx=(12, 0), pady=(8, 0))
+            row=2, column=1, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Label(box, text="图案").grid(row=2, column=3, pady=(8, 0), padx=(12, 2))
+        ttk.Combobox(box, textvariable=self.direction, state="readonly", width=12,
+                     values=[d[0] for d in DIRECTIONS]).grid(
+            row=2, column=4, columnspan=4, sticky="w", pady=(8, 0))
         ttk.Checkbutton(box, text="把图中所有文字翻译成盲文（带文字的图建议配合“直接用此图”）",
                         variable=self.braille_text).grid(
             row=3, column=0, columnspan=9, sticky="w", pady=(8, 0))
@@ -151,6 +156,8 @@ class PictureTab(ttk.Frame):
         cmd = [PY, str(HERE / "relief.py"), "--keep",
                "--size", self.size.get(), "--base", self.base.get(), "--relief", self.relief.get(),
                "--precision", self.precision.get(), "--style", style]
+        if dict(DIRECTIONS)[self.direction.get()] == "engrave":
+            cmd += ["--engrave"]
         if idea:
             cmd += ["--idea", idea]
         if img:
@@ -301,6 +308,7 @@ class BatchTab(ttk.Frame):
         self.size = tk.StringVar(value="120")
         self.precision = tk.StringVar(value="0.1")
         self.style = tk.StringVar(value=STYLES[0][0])
+        self.direction = tk.StringVar(value=DIRECTIONS[0][0])
         self.lang = tk.StringVar(value=SCHEMES[0][0])
         self.pdf_path = None        # set when a PDF is analyzed (needed for 抠原图)
         self.worklist = []          # full worklist dicts (with page+box) from pdf_analyze
@@ -318,8 +326,11 @@ class BatchTab(ttk.Frame):
         ttk.Combobox(opt, textvariable=self.mode, state="readonly", width=16,
                      values=[m[0] for m in BATCH_MODES]).grid(row=0, column=1, padx=(2, 12))
         ttk.Label(opt, text="风格").grid(row=0, column=2)
-        ttk.Combobox(opt, textvariable=self.style, state="readonly", width=15,
+        ttk.Combobox(opt, textvariable=self.style, state="readonly", width=13,
                      values=[s[0] for s in STYLES]).grid(row=0, column=3, padx=(2, 0))
+        ttk.Label(opt, text="图案").grid(row=0, column=4, padx=(12, 0))
+        ttk.Combobox(opt, textvariable=self.direction, state="readonly", width=12,
+                     values=[d[0] for d in DIRECTIONS]).grid(row=0, column=5, padx=(2, 0))
         ttk.Label(opt, text="盲文方案").grid(row=1, column=0, pady=(6, 0), sticky="w")
         ttk.Combobox(opt, textvariable=self.lang, state="readonly", width=16,
                      values=[s[0] for s in SCHEMES]).grid(row=1, column=1, padx=(2, 12), pady=(6, 0))
@@ -363,13 +374,14 @@ class BatchTab(ttk.Frame):
                    ["--style", dict(STYLES)[self.style.get()]]
         engine = dict(OCR_ENGINES)[self.ocr.get()]
         braille = ["--braille-text", "--text-engine", engine] if self.braille_in.get() else []
+        engrave = ["--engrave"] if dict(DIRECTIONS)[self.direction.get()] == "engrave" else []
 
         if method == "local":                         # 本地文件夹：免 API
             if not self.figures_dir or not Path(self.figures_dir).is_dir():
                 messagebox.showwarning("需要图片文件夹", "请先点「📁 PDF→图片(本地)」提取，并整理好文件夹。")
                 return
             cmd = [PY, str(HERE / "batch.py"), "--images", self.figures_dir,
-                   "--mode", mode, *common, *variants, *braille]
+                   "--mode", mode, *common, *variants, *braille, *engrave]
         elif method == "extract":                     # 抠原图：Gemini 定位 + 裁剪
             items = self.list.get("1.0", "end").strip()
             if not self.pdf_path or not self.worklist:
@@ -382,7 +394,7 @@ class BatchTab(ttk.Frame):
             wl = tmp / "tactile_pdf_worklist.json"
             wl.write_text(json.dumps(sel, ensure_ascii=False), encoding="utf-8")
             cmd = [PY, str(HERE / "pdf_make.py"), self.pdf_path, str(wl), *common,
-                   "--text-engine", engine]
+                   "--text-engine", engine, *engrave]
             if not self.braille_in.get():
                 cmd += ["--no-braille"]
         else:                                         # 重画：从描述生成
@@ -391,7 +403,7 @@ class BatchTab(ttk.Frame):
                 messagebox.showwarning("缺少清单", "请输入清单（每行一个）"); return
             tf = tmp / "tactile_batch_list.txt"
             tf.write_text(items, encoding="utf-8")
-            cmd = [PY, str(HERE / "batch.py"), str(tf), "--mode", mode, *common, *variants, *braille]
+            cmd = [PY, str(HERE / "batch.py"), str(tf), "--mode", mode, *common, *variants, *braille, *engrave]
         self.btn.config(state="disabled", text="⏳ 批量生成中…")
         self.runner.start(cmd)
 

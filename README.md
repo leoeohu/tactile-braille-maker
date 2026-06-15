@@ -82,7 +82,8 @@ Or from a terminal:
 
 A three-tab window:
 * **图片浮雕板** — type an idea (and/or pick a reference image), set size / precision (mm) /
-  style (line vs grayscale relief), hit generate; shows the height-map preview, writes the STL.
+  style (line vs grayscale relief) / **图案 (突出 vs 凹进去)**, hit generate; shows the
+  height-map preview, writes the STL.
 * **盲文标签** — type text, choose the braille scheme (国家通用盲文 by default), with a
   **live dot preview**; generate writes the STL.
 * **批量** — paste a list (one item per line), pick mode (picture / braille / both), and
@@ -186,7 +187,8 @@ shorter side follows the picture, so the relief is never squished.
 |------|---------|---------|
 | `--size` | 120 | **longer** plate side (mm); shorter side follows the image aspect |
 | `--base` | 3.0 | solid base thickness (mm) |
-| `--relief` | 1.5 | max raised height (mm) |
+| `--relief` | 1.5 | relief height/depth (mm) |
+| `--engrave` | off | carve the pattern **into** the plate (凹) instead of raising it (凸); braille stays raised |
 | `--res` | 600 | subdivisions along the longer side (higher = finer/slower) |
 | `--precision` | — | **target detail in mm/vertex** (overrides `--res`; clamped to ≤2000 subdiv). 0.001mm is impossible — printers resolve ~0.1mm FDM / ~0.05mm resin |
 | `--style` | line | `line` = black/white line art (flat-topped relief) · `relief` = **grayscale bas-relief with varying depth** |
